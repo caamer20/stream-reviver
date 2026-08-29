@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stream Reviver test page</title>
+    <link rel="stylesheet" href="test-page.css">
+  </head>
+  <body>
+    <header>
+      <div><span class="tag">LOCAL SIMULATOR</span><h1>Stream Reviver test page</h1></div>
+      <div id="clock" aria-live="off"></div>
+    </header>
+    <main>
+      <section class="player-card">
+        <div id="player" class="player">
+          <canvas id="source-canvas" width="960" height="540" hidden></canvas>
+          <div id="placeholder">Preparing local video…</div>
+        </div>
+        <div class="readout"><strong id="mode-label">Mode</strong><span id="readout">Initializing…</span></div>
+      </section>
+      <aside>
+        <h2>Scenarios</h2>
+        <p>Each scenario is entirely local. A query parameter preserves the selected failure across reloads for loop-protection testing.</p>
+        <div class="scenario-list">
+          <button data-mode="healthy"><strong>Healthy playback</strong><small>Looping, advancing HTML5 video.</small></button>
+          <button data-mode="stall"><strong>Stalled video</strong><small>Playback remains unpaused at the end of an open media stream.</small></button>
+          <button data-mode="error"><strong>Video error</strong><small>Loads an invalid local media source.</small></button>
+          <button data-mode="delayed"><strong>Delayed injection</strong><small>Adds a healthy video after 20 seconds.</small></button>
+          <button data-mode="none"><strong>No video</strong><small>Confirms that missing video alone never reloads.</small></button>
+          <button data-mode="multi"><strong>Multiple videos</strong><small>A small muted preview competes with the main player.</small></button>
+          <button data-mode="spa"><strong>SPA navigation</strong><small>Changes URL and injects the player without reloading.</small></button>
+          <button data-mode="iframe"><strong>Iframe player</strong><small>Runs the healthy player inside a same-origin frame.</small></button>
+          <button data-mode="churn"><strong>DOM churn</strong><small>Healthy playback alongside a rapidly updating chat feed.</small></button>
+          <button data-mode="recovery"><strong>Retry-button recovery</strong><small>A configured retry control clears an error and starts playback.</small></button>
+          <button data-mode="access"><strong>Access interruption</strong><small>A sign-in dialog must pause all automatic recovery.</small></button>
+          <button data-mode="replace"><strong>Player replacement</strong><small>A healthy player is replaced during playback.</small></button>
+        </div>
+        <details>
+          <summary>Optional error-selector test</summary>
+          <p>Set this site’s error selector to <code>.simulated-stream-error</code>, then show or hide the overlay.</p>
+          <button id="toggle-error" type="button">Toggle error overlay</button>
+        </details>
+      </aside>
+    </main>
+    <script src="test-page.js"></script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Welcome to Stream Reviver</title>
+    <link rel="stylesheet" href="welcome.css">
+  </head>
+  <body>
+    <main>
+      <div class="logo" aria-hidden="true">▶</div>
+      <p class="eyebrow">WELCOME TO</p>
+      <h1>Stream Reviver</h1>
+      <p class="lede">A conservative, opt-in safety net for live HTML5 video streams.</p>
+      <section>
+        <h2>Before enabling monitoring</h2>
+        <p id="disclaimer"></p>
+      </section>
+      <label><input id="agree" type="checkbox"> <span>I have read and understand this disclaimer.</span></label>
+      <button id="continue" type="button" disabled>Acknowledge and continue</button>
+      <p id="feedback" role="status"></p>
+      <p class="privacy">No analytics, tracking, or external API calls. Settings remain in browser storage.</p>
+    </main>
+    <script src="welcome.js"></script>
+  </body>
+</html>

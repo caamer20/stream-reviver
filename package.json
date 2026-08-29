@@ -1,0 +1,21 @@
+{
+  "name": "stream-reviver",
+  "version": "3.0.0",
+  "private": true,
+  "description": "A conservative, opt-in live stream monitor for Chrome and Firefox.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "test:e2e": "node scripts/e2e.mjs",
+    "release:check": "npm run verify && node scripts/release-check.mjs",
+    "verify": "npm run check && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.326",
+    "@types/node": "^24.3.0",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.9.2"
+  }
+}

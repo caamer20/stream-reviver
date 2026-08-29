@@ -1,0 +1,32 @@
+:root { color-scheme: dark; font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #edf0f8; background: #0e1118; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 20% 0, #202b4d, #0e1118 45%); }
+header { display: flex; justify-content: space-between; align-items: center; max-width: 1300px; margin: 0 auto; padding: 24px; }
+h1 { margin: 3px 0 0; font-size: 24px; }
+.tag { color: #8fafef; font-size: 11px; font-weight: 800; letter-spacing: .13em; }
+#clock { color: #99a3b7; font-variant-numeric: tabular-nums; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 22px; max-width: 1300px; margin: 0 auto; padding: 0 24px 50px; }
+.player-card, aside { overflow: hidden; border: 1px solid #2e3545; border-radius: 14px; background: #171b25; box-shadow: 0 20px 55px rgba(0,0,0,.2); }
+.player { position: relative; display: grid; place-items: center; aspect-ratio: 16/9; background: #050608; }
+.player video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+#placeholder { color: #778095; }
+.readout { display: flex; justify-content: space-between; gap: 20px; padding: 12px 15px; border-top: 1px solid #2e3545; color: #aab2c3; font-size: 13px; }
+.readout strong { color: #7ed9a5; }
+aside { padding: 20px; }
+h2 { margin: 0 0 4px; font-size: 18px; }
+aside > p, details p { color: #9ba4b8; font-size: 13px; }
+.scenario-list { display: grid; gap: 8px; margin: 18px 0; }
+button { border: 1px solid #373e50; border-radius: 9px; padding: 10px 12px; background: #202532; color: white; text-align: left; font: inherit; cursor: pointer; }
+button:hover { border-color: #6487dc; background: #252c3d; }
+button.active { border-color: #77a0f5; box-shadow: 0 0 0 1px #77a0f5 inset; }
+button small { display: block; color: #919aaf; font-size: 11px; }
+details { border-top: 1px solid #303646; padding-top: 15px; }
+summary { cursor: pointer; font-weight: 700; }
+code { color: #d2c6ff; }
+.simulated-stream-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 30px; background: rgba(80,17,21,.91); color: white; font-size: 22px; font-weight: 750; text-align: center; }
+.preview-video { position:absolute!important;right:15px;bottom:15px;width:180px!important;height:102px!important;z-index:2;border:2px solid #fff3; }
+.test-iframe { width:100%;height:100%;border:0;background:#000; }
+.retry-stream { position:absolute;z-index:3;left:50%;top:62%;transform:translateX(-50%);background:#f8fafc;color:#171923; }
+#churn-feed { position:absolute;right:8px;top:8px;width:190px;max-height:80%;overflow:hidden;z-index:2;pointer-events:none; }
+#churn-feed span { display:block;margin:3px;padding:3px 6px;border-radius:4px;background:#0009;color:#ddd;font-size:10px; }
+@media (max-width: 850px) { main { grid-template-columns: 1fr; } }

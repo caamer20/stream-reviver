@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stream Reviver</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header>
+      <div class="brand-mark" aria-hidden="true">▶</div>
+      <div>
+        <h1>Stream Reviver</h1>
+        <p id="site-label">Current site</p>
+      </div>
+    </header>
+
+    <section id="acknowledgement" class="notice" hidden>
+      <h2>Before you begin</h2>
+      <p>This extension can reload pages and change the player layout. Review and accept the disclaimer before enabling monitoring.</p>
+      <button id="acknowledge" class="primary" type="button">I understand and agree</button>
+    </section>
+
+    <main id="controls">
+      <section class="status-card" aria-live="polite">
+        <span id="status-dot" class="status-dot"></span>
+        <div>
+          <strong id="status-title">Loading…</strong>
+          <p id="status-detail">Reading this tab’s status.</p>
+          <div id="confidence-wrap" class="confidence" hidden><span><i id="confidence-bar"></i></span><small id="confidence-label"></small></div>
+          <ul id="evidence" class="evidence"></ul>
+          <dl id="status-meta" class="status-meta"><div><dt>Diagnosis</dt><dd id="diagnosis">—</dd></div><div><dt>Stream</dt><dd id="stream-kind">—</dd></div><div><dt>Live lag</dt><dd id="live-lag">—</dd></div><div><dt>Buffer</dt><dd id="buffer-ahead">—</dd></div></dl>
+        </div>
+      </section>
+
+      <section class="switches" aria-label="Stream Reviver controls">
+        <label><span>Extension enabled<small>Global master switch</small></span><input id="global-enabled" type="checkbox" role="switch"></label>
+        <label><span>Monitor this site<small>Requests access only to this origin</small></span><input id="site-enabled" type="checkbox" role="switch"></label>
+        <label><span>Auto-refresh<small>Override for this site</small></span><input id="auto-refresh" type="checkbox" role="switch"></label>
+        <label><span>Auto-maximize<small>Override for this site</small></span><input id="auto-maximize" type="checkbox" role="switch"></label>
+      </section>
+
+      <div class="actions">
+        <button id="refresh-now" type="button">↻ Refresh now</button>
+        <button id="maximize-now" type="button">⛶ Maximize now</button>
+        <button id="pip-now" type="button">▣ Picture-in-Picture</button>
+        <button id="pin-player" type="button">⌖ Pick primary player</button>
+        <button id="jump-live" type="button">● Jump to live</button>
+      </div>
+
+      <section class="recovery-controls">
+        <div class="snooze-row"><select id="snooze-duration" aria-label="Snooze duration"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="-1">Until resumed</option></select><button id="snooze" type="button">Snooze</button><button id="resume" type="button" hidden>Resume</button></div>
+        <div id="countdown-actions" class="mini-actions" hidden><button id="extend-countdown" type="button">+30 seconds</button><button id="cancel-countdown" type="button">Cancel refresh</button></div>
+        <button id="reset-attempts" class="wide" type="button" hidden>Reset recovery attempts and retry</button>
+        <small id="attempt-count"></small>
+        <div class="snooze-row"><select id="event-duration" aria-label="Event mode duration"><option value="60">1 hour</option><option value="120">2 hours</option><option value="180" selected>3 hours</option></select><button id="event-mode" type="button">Start event mode</button><button id="event-stop" type="button" hidden>End event mode</button></div>
+      </section>
+
+      <section class="activity"><div><strong>Recent activity</strong><button id="open-diagnostics" class="link" type="button">View all</button></div><ol id="activity-list"></ol><div class="quality-feedback"><button id="mark-correct" type="button">Recovery was correct</button><button id="mark-false-alarm" type="button">False alarm</button></div></section>
+      <p id="feedback" class="feedback" role="alert"></p>
+    </main>
+
+    <footer>
+      <button id="open-settings" class="link" type="button">Settings</button>
+      <span aria-hidden="true">•</span>
+      <button id="open-disclaimer" class="link" type="button">Disclaimer</button>
+      <p>Works only on sites you explicitly enable.</p>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

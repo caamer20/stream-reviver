@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stream Reviver settings</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="logo" aria-hidden="true">▶</div>
+      <div><h1>Stream Reviver</h1><p>Settings and site access</p></div>
+    </header>
+
+    <div class="layout">
+      <nav aria-label="Settings sections">
+        <a href="#global">Global defaults</a>
+        <a href="#sites">Per-site settings</a>
+        <a href="#diagnostics">Diagnostics</a>
+        <a href="#data">Import &amp; export</a>
+        <a href="#disclaimer">Disclaimer</a>
+      </nav>
+
+      <main>
+        <section id="global" class="card">
+          <div class="section-heading"><div><h2>Global defaults</h2><p>Safe defaults applied unless a site has an override.</p></div><button id="save-global" class="primary" type="button">Save defaults</button></div>
+          <div class="setting-grid">
+            <label class="toggle-row"><span><strong>Extension enabled</strong><small>Master switch for all monitoring.</small></span><input id="enabled" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Automatic refresh</strong><small>Schedule a page reload after a sustained failure.</small></span><input id="autoRefresh" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Automatic maximize</strong><small>Try to restore a large player after an automatic reload.</small></span><input id="autoMaximize" type="checkbox" role="switch"></label>
+            <label><span>Check interval <small>Seconds between health checks.</small></span><input id="checkIntervalSeconds" type="number" min="1" max="60"></label>
+            <label><span>Healthy interval <small>Slower polling while playback is healthy.</small></span><input id="healthyCheckIntervalSeconds" type="number" min="2" max="120"></label>
+            <label><span>Suspect interval <small>Faster polling while confirming a problem.</small></span><input id="suspectCheckIntervalSeconds" type="number" min="0.5" max="10" step="0.5"></label>
+            <label><span>DOM change debounce <small>Milliseconds before rescanning relevant player changes.</small></span><input id="mutationDebounceMs" type="number" min="100" max="5000" step="50"></label>
+            <label><span>Stall timeout <small>Seconds without progress before a stream is suspected down.</small></span><input id="stallTimeoutSeconds" type="number" min="5" max="300"></label>
+            <label><span>Page-load grace <small>Seconds before failures are acted upon.</small></span><input id="pageLoadGraceSeconds" type="number" min="0" max="300"></label>
+            <label><span>Refresh countdown <small>Seconds available to cancel a reload.</small></span><input id="refreshCountdownSeconds" type="number" min="1" max="60"></label>
+            <label><span>Maximum auto-refreshes <small>Attempts allowed inside the time window.</small></span><input id="maxAutoRefreshes" type="number" min="1" max="20"></label>
+            <label><span>Refresh window <small>Minutes used by loop protection.</small></span><input id="refreshWindowMinutes" type="number" min="1" max="1440"></label>
+            <label><span>Successful playback reset <small>Healthy seconds before attempt history is cleared.</small></span><input id="successResetSeconds" type="number" min="10" max="3600"></label>
+            <label><span>Failure confidence threshold <small>Minimum weighted confidence before confirmation begins.</small></span><input id="failureConfidenceThreshold" type="number" min="40" max="100"></label>
+            <label><span>Confirmation checks <small>Consecutive high-confidence checks before recovery.</small></span><input id="failureConfirmationChecks" type="number" min="1" max="10"></label>
+            <label class="toggle-row"><span><strong>Only monitor visible tabs</strong><small>Avoid reloading background tabs by default.</small></span><input id="onlyWhenTabVisible" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Wait while offline</strong><small>Preserve attempts until the network reconnects.</small></span><input id="waitWhileOffline" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Lock primary player</strong><small>Keep the current player unless a much stronger candidate appears.</small></span><input id="lockPrimaryVideo" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Detect frozen frames</strong><small>Use presented-frame callbacks when the browser exposes them.</small></span><input id="detectFrozenFrames" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Restore player preferences</strong><small>Remember local volume, rate, captions, and maximize state.</small></span><input id="restorePlayerPreferences" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>CSS maximize fallback</strong><small>Fill the viewport when native fullscreen is blocked.</small></span><input id="useCssMaximizeFallback" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Try native fullscreen controls</strong><small>Look for a site player’s fullscreen button.</small></span><input id="attemptNativeFullscreenClick" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Picture-in-Picture fallback</strong><small>Expose a click-based floating-player action.</small></span><input id="enablePictureInPicture" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Show icon badge</strong><small>Display health state on the toolbar icon.</small></span><input id="showBadge" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Browser notifications</strong><small>Notify only when loop protection pauses refreshing.</small></span><input id="showNotifications" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Local diagnostic history</strong><small>Keep a bounded event timeline in local browser storage.</small></span><input id="localHistoryEnabled" type="checkbox" role="switch"></label>
+            <label><span>History limit <small>Maximum locally stored diagnostic events.</small></span><input id="historyLimit" type="number" min="20" max="1000"></label>
+            <label class="toggle-row"><span><strong>Local adaptive tuning</strong><small>Learn safe per-site baselines and successful soft actions without analytics.</small></span><input id="enableAdaptiveTuning" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Advanced player bridge</strong><small>Opt-in MSE, HLS, DASH, and WebRTC diagnostics in the page’s JavaScript world.</small></span><input id="enableAdvancedPlayerBridge" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Visual watchdog</strong><small>Experimental active-tab frame comparison; no images are stored.</small></span><input id="enableVisualWatchdog" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Keep screen awake</strong><small>Request a wake lock only while visible healthy playback is active.</small></span><input id="keepScreenAwake" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Protect tab from discard</strong><small>Use more memory to keep monitored tabs loaded.</small></span><input id="protectTabFromDiscard" type="checkbox" role="switch"></label>
+            <label><span>Live-edge recovery threshold <small>Seconds behind an advancing live edge before recovery.</small></span><input id="liveEdgeThresholdSeconds" type="number" min="5" max="600"></label>
+            <label><span>Action verification <small>Healthy seconds required before an action succeeds.</small></span><input id="recoveryVerificationSeconds" type="number" min="3" max="120"></label>
+            <label><span>Actions per recovery cycle <small>Hard limit before the circuit breaker opens.</small></span><input id="maxRecoveryActionsPerCycle" type="number" min="1" max="30"></label>
+            <label><span>Visual sample interval <small>Seconds between experimental visible-tab samples.</small></span><input id="visualSampleIntervalSeconds" type="number" min="5" max="120"></label>
+          </div>
+          <fieldset class="recovery-strategy"><legend>Recovery ladder</legend><p>Drag-free ordered steps are run from left to right. Uncheck disruptive steps you do not want.</p><div id="global-recovery-actions" class="check-grid"></div><label><span>Backoff seconds <small>Comma-separated delays used between recovery steps.</small></span><input id="recoveryBackoffSeconds" type="text" placeholder="5, 15, 45, 120"></label></fieldset>
+        </section>
+
+        <section id="sites" class="card">
+          <div class="section-heading"><div><h2>Per-site settings</h2><p>Sites are disabled until you explicitly grant access.</p></div></div>
+          <div class="site-add">
+            <label for="new-origin">Site origin</label>
+            <input id="new-origin" type="text" inputmode="url" placeholder="https://example.com">
+            <button id="add-site" type="button">Add site</button>
+          </div>
+          <div class="site-layout">
+            <div>
+              <label for="site-list">Configured sites</label>
+              <select id="site-list" size="8" aria-label="Configured sites"></select>
+            </div>
+            <div id="site-editor" hidden>
+              <div class="site-editor-heading">
+                <div><h3 id="site-origin"></h3><p>Checked overrides replace the global value on this site.</p></div>
+                <button id="remove-site" class="danger" type="button">Remove</button>
+              </div>
+              <label class="toggle-row emphasized"><span><strong>Monitoring enabled</strong><small>Grants or removes access to this origin.</small></span><input id="site-enabled" type="checkbox" role="switch"></label>
+              <div id="site-overrides" class="override-list"></div>
+              <fieldset>
+                <legend>Advanced selectors</legend>
+                <p>Use Pick on page, switch to an open tab on this origin, and click the desired element. Escape cancels.</p>
+                <div id="selector-fields"></div>
+              </fieldset>
+              <fieldset><legend>URL rules</legend><label><span>Include patterns <small>One wildcard URL per line. Empty means every URL on this origin.</small></span><textarea id="includeUrlPatterns" rows="3" placeholder="https://example.com/live/*"></textarea></label><label><span>Exclude patterns <small>Excluded URLs always win.</small></span><textarea id="excludeUrlPatterns" rows="3" placeholder="https://example.com/account/*"></textarea></label></fieldset>
+              <fieldset><legend>Player and backup</legend><label><span>Declared player type <small>Auto is recommended unless advanced diagnostics identify the library.</small></span><select id="declaredPlayerType"><option>AUTO</option><option>HTML5</option><option>MSE</option><option>HLS_JS</option><option>DASH_JS</option><option>WEBRTC</option><option>CANVAS</option></select></label><label><span>Backup stream URLs <small>One user-authorized URL per line. Handoff always requires a click.</small></span><textarea id="backupUrls" rows="3" placeholder="https://example.com/backup"></textarea></label></fieldset>
+              <fieldset><legend>Recovery override</legend><label class="override-toggle"><input id="override-recoveryStrategy" type="checkbox"> Override recovery ladder for this site</label><div id="site-recovery-actions" class="check-grid"></div><label class="override-toggle"><input id="override-recoveryBackoffSeconds" type="checkbox"> Override backoff seconds</label><input id="site-recoveryBackoffSeconds" type="text" placeholder="5, 15, 45, 120"></fieldset>
+              <button id="save-site" class="primary" type="button">Save site settings</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="diagnostics" class="card">
+          <div class="section-heading"><div><h2>Local diagnostics</h2><p>A bounded event timeline stored only in this browser.</p></div><div class="button-row"><button id="export-diagnostics" type="button">Export diagnostics</button><button id="clear-diagnostics" class="danger" type="button">Clear history</button></div></div>
+          <div id="diagnostic-stats" class="stats"></div>
+          <div class="history-table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>Detail</th><th>Page</th></tr></thead><tbody id="diagnostic-history"></tbody></table></div>
+        </section>
+
+        <section id="data" class="card">
+          <h2>Import &amp; export</h2>
+          <p>Exported JSON contains settings and site origins, but never browsing history. Imported sites remain disabled until access is granted again.</p>
+          <div class="button-row">
+            <button id="export-settings" type="button">Export settings</button>
+            <label class="file-button">Choose import file<input id="import-file" type="file" accept="application/json,.json"></label>
+            <button id="import-settings" type="button" disabled>Import settings</button>
+            <button id="reset-settings" class="danger" type="button">Reset defaults</button>
+          </div>
+          <fieldset>
+            <legend>Declarative site profiles</legend>
+            <p>Profiles are validated JSON data only and can never contain executable code. Applying a profile does not grant site access.</p>
+            <label><span>Saved profiles</span><select id="profile-list"><option value="">New profile</option></select></label>
+            <label><span>Profile JSON</span><textarea id="profile-json" rows="12" spellcheck="false" placeholder='{"name":"My player profile","schemaVersion":1}'></textarea></label>
+            <div class="button-row"><button id="profile-from-site" type="button">Build from selected site</button><button id="save-profile" type="button">Validate and save</button><button id="apply-profile" type="button">Apply to selected site</button><button id="export-profile" type="button">Export</button><button id="delete-profile" class="danger" type="button">Delete</button></div>
+          </fieldset>
+        </section>
+
+        <section id="disclaimer" class="card disclaimer">
+          <h2>Disclaimer</h2>
+          <p id="disclaimer-text"></p>
+          <div id="ack-state" class="ack-state"></div>
+          <button id="acknowledge" type="button">Acknowledge disclaimer</button>
+        </section>
+
+        <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+      </main>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>

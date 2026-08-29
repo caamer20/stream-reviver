@@ -1,0 +1,24 @@
+.stream-reviver-maximized {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483646 !important;
+  box-sizing: border-box !important;
+  display: block !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  transform: none !important;
+  background: #000 !important;
+  object-fit: contain !important;
+}
+
+.stream-reviver-maximized video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain !important;
+}
