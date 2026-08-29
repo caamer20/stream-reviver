@@ -1,0 +1,6 @@
+{
+  "nameSuffix": "Development",
+  "descriptionPrefix": "DEVELOPMENT BUILD — ",
+  "firefoxId": "stream-reviver-development@example.local",
+  "includeSourceMaps": true
+}

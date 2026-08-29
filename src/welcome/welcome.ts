@@ -1,6 +1,9 @@
 import { DISCLAIMER } from "../shared/defaults";
 import { apiCall, ext, sendMessage } from "../shared/api";
+import { localizeDocument } from "../shared/i18n";
 import type { RuntimeMessage } from "../shared/types";
+
+localizeDocument();
 
 const agree = document.getElementById("agree") as HTMLInputElement;
 const button = document.getElementById("continue") as HTMLButtonElement;

@@ -1,0 +1,12 @@
+{
+  "extensionName": { "message": "Stream Reviver" },
+  "shortName": { "message": "Stream Reviver" },
+  "extensionDescription": { "message": "Classify, diagnose, and safely recover failed live streams with local, explainable automation." },
+  "actionTitle": { "message": "Open Stream Reviver" },
+  "popupTitle": { "message": "Stream Reviver" },
+  "settingsTitle": { "message": "Stream Reviver settings" },
+  "welcomeTitle": { "message": "Welcome to Stream Reviver" },
+  "settings": { "message": "Settings" },
+  "disclaimer": { "message": "Disclaimer" },
+  "advancedStatus": { "message": "Technical details" }
+}

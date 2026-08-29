@@ -1,11 +1,18 @@
 import { build } from "esbuild";
+import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { deflateSync } from "node:zlib";
 import path from "node:path";
 
 const root = process.cwd();
-const outRoot = path.join(root, "dist");
+const requestedChannel = readArgument("--channel") ?? "development";
+if (!["development", "beta", "stable"].includes(requestedChannel)) throw new Error(`Unknown build channel: ${requestedChannel}`);
+const legacyLayout = !process.argv.includes("--channel");
+const outRoot = legacyLayout ? path.join(root, "dist") : path.join(root, "dist", requestedChannel);
 const browsers = ["chrome", "firefox"];
+const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const channelConfig = JSON.parse(await readFile(path.join(root, "config", `${requestedChannel}.json`), "utf8"));
+const commit = gitCommit();
 const entryPoints = {
   background: "src/background/background.ts",
   content: "src/content/content.ts",
@@ -15,7 +22,9 @@ const entryPoints = {
   welcome: "src/welcome/welcome.ts"
 };
 
-await rm(outRoot, { recursive: true, force: true });
+if (legacyLayout) {
+  for (const name of [...browsers, "test-page", "checksums.json", "provenance.json"]) await rm(path.join(outRoot, name), { recursive: true, force: true });
+} else await rm(outRoot, { recursive: true, force: true });
 await mkdir(outRoot, { recursive: true });
 
 for (const browser of browsers) {
@@ -28,10 +37,14 @@ for (const browser of browsers) {
     format: "iife",
     platform: "browser",
     target: browser === "chrome" ? ["chrome109"] : ["firefox140"],
-    sourcemap: true,
+    sourcemap: channelConfig.includeSourceMaps,
     minify: false,
     legalComments: "none",
-    define: { __TARGET_BROWSER__: JSON.stringify(browser) }
+    define: {
+      __TARGET_BROWSER__: JSON.stringify(browser),
+      __BUILD_CHANNEL__: JSON.stringify(requestedChannel),
+      __BUILD_VERSION__: JSON.stringify(packageJson.version)
+    }
   });
 
   for (const file of [
@@ -48,8 +61,21 @@ for (const browser of browsers) {
     await cp(source, destination);
   }
 
+  const localesDir = path.join(outdir, "_locales");
+  await cp(path.join(root, "src", "_locales"), localesDir, { recursive: true });
+  const englishMessagesPath = path.join(localesDir, "en", "messages.json");
+  const englishMessages = JSON.parse(await readFile(englishMessagesPath, "utf8"));
+  const localizedSuffix = channelConfig.nameSuffix ? ` ${channelConfig.nameSuffix}` : "";
+  englishMessages.extensionName.message = `Stream Reviver${localizedSuffix}`;
+  englishMessages.shortName.message = `Stream Reviver${localizedSuffix}`.slice(0, 30);
+  englishMessages.extensionDescription.message = `${channelConfig.descriptionPrefix}Classify, diagnose, and safely recover failed live streams with local, explainable automation.`.slice(0, 132);
+  await writeFile(englishMessagesPath, `${JSON.stringify(englishMessages, null, 2)}\n`);
+
   const manifest = createManifest(browser);
   await writeFile(path.join(outdir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(path.join(outdir, "build-info.json"), `${JSON.stringify({
+    channel: requestedChannel, version: packageJson.version, commit, target: browser
+  }, null, 2)}\n`);
 
   for (const size of [16, 32, 48, 128]) {
     await writeFile(path.join(outdir, `icon-${size}.png`), createIconPng(size));
@@ -57,19 +83,24 @@ for (const browser of browsers) {
 }
 
 await cp(path.join(root, "test"), path.join(outRoot, "test-page"), { recursive: true });
-console.log("Built dist/chrome, dist/firefox, and dist/test-page");
+await writeFile(path.join(outRoot, "provenance.json"), `${JSON.stringify({
+  channel: requestedChannel, version: packageJson.version, commit, generatedAt: new Date().toISOString(), node: process.version
+}, null, 2)}\n`);
+console.log(`Built ${requestedChannel} Chrome, Firefox, and test-page output in ${path.relative(root, outRoot)}`);
 
 function createManifest(browser) {
   const manifest = {
     manifest_version: 3,
-    name: "Stream Reviver",
-    version: "3.0.0",
-    description: "Classify, diagnose, and safely recover failed live streams with local, explainable automation.",
+    default_locale: "en",
+    name: "__MSG_extensionName__",
+    short_name: "__MSG_shortName__",
+    version: packageJson.version,
+    description: "__MSG_extensionDescription__",
     permissions: ["storage", "activeTab", "scripting"],
     optional_permissions: ["notifications"],
     optional_host_permissions: ["<all_urls>"],
     action: {
-      default_title: "Stream Reviver",
+      default_title: "__MSG_actionTitle__",
       default_popup: "popup.html",
       default_icon: iconMap()
     },
@@ -101,7 +132,7 @@ function createManifest(browser) {
   } else {
     manifest.browser_specific_settings = {
       gecko: {
-        id: "stream-reviver@example.local",
+        id: channelConfig.firefoxId,
         strict_min_version: "140.0",
         data_collection_permissions: {
           required: ["none"]
@@ -117,6 +148,18 @@ function createManifest(browser) {
   }
 
   return manifest;
+}
+
+function readArgument(name) {
+  const direct = process.argv.find((argument) => argument.startsWith(`${name}=`));
+  if (direct) return direct.slice(name.length + 1);
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : null;
+}
+
+function gitCommit() {
+  try { return execFileSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: root, encoding: "utf8" }).trim(); }
+  catch { return "uncommitted"; }
 }
 
 function iconMap() {

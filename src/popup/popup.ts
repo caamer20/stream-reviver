@@ -1,5 +1,8 @@
 import { apiCall, ext, getOrigin, originPattern, queryActiveTab, sendMessage } from "../shared/api";
+import { localizeDocument } from "../shared/i18n";
 import type { PopupState, RuntimeMessage, SiteSettings } from "../shared/types";
+
+localizeDocument();
 
 const el = {
   acknowledgement: byId<HTMLElement>("acknowledgement"), acknowledge: byId<HTMLButtonElement>("acknowledge"), controls: byId<HTMLElement>("controls"),
@@ -119,7 +122,7 @@ function render(): void {
 
   const labels: Record<string, string> = {
     DISABLED: "Disabled", SITE_NOT_ENABLED: "Site not enabled", URL_EXCLUDED: "URL excluded", SNOOZED: "Monitoring snoozed", OFFLINE: "Offline",
-    NO_VIDEO_FOUND: "No video detected", MONITORING: "Monitoring", HEALTHY: "Stream healthy", SUSPECTED_DOWN: "Stream may be down",
+    NO_VIDEO_FOUND: "No video detected", LIMITED_VISIBILITY: "Limited player visibility", MONITORING: "Monitoring", HEALTHY: "Stream healthy", SUSPECTED_DOWN: "Stream may be down",
     RECOVERING: "Recovery in progress", COUNTDOWN: "Refresh scheduled", REFRESHING: "Refreshing", PAUSED_TOO_MANY_REFRESHES: "Recovery paused",
     MAXIMIZE_BLOCKED: "Maximize needs a click", ERROR: "Extension error"
   };

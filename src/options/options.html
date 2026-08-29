@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-i18n-title="settingsTitle">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,9 +7,10 @@
     <link rel="stylesheet" href="options.css">
   </head>
   <body>
+    <a class="skip-link" href="#main-content">Skip to settings</a>
     <header class="topbar">
       <div class="logo" aria-hidden="true">▶</div>
-      <div><h1>Stream Reviver</h1><p>Settings and site access</p></div>
+      <div><h1 data-i18n="extensionName">Stream Reviver</h1><p>Settings and site access</p></div>
     </header>
 
     <div class="layout">
@@ -18,10 +19,11 @@
         <a href="#sites">Per-site settings</a>
         <a href="#diagnostics">Diagnostics</a>
         <a href="#data">Import &amp; export</a>
+        <a href="#privacy">Privacy &amp; deletion</a>
         <a href="#disclaimer">Disclaimer</a>
       </nav>
 
-      <main>
+      <main id="main-content" tabindex="-1">
         <section id="global" class="card">
           <div class="section-heading"><div><h2>Global defaults</h2><p>Safe defaults applied unless a site has an override.</p></div><button id="save-global" class="primary" type="button">Save defaults</button></div>
           <div class="setting-grid">
@@ -121,6 +123,26 @@
           </fieldset>
         </section>
 
+        <section id="privacy" class="card">
+          <h2>Privacy &amp; local data</h2>
+          <p>Stream Reviver does not transmit analytics or playback data. You can remove each locally stored category independently or erase everything.</p>
+          <dl class="data-inventory">
+            <div><dt>Synced settings</dt><dd>Global defaults, configured origins, selectors, and URL rules.</dd></div>
+            <div><dt>Local history and models</dt><dd>Bounded diagnostic events and locally learned action outcomes.</dd></div>
+            <div><dt>Session recovery state</dt><dd>Short-lived reload protection, status, and player restoration snapshots.</dd></div>
+            <div><dt>Visual watchdog</dt><dd>Active-tab screenshots are reduced to an 8×8 hash in memory and never stored or transmitted.</dd></div>
+          </dl>
+          <p id="visual-consent-state" class="privacy-state"></p>
+          <div class="button-row">
+            <button data-clear="history" type="button">Clear history</button>
+            <button data-clear="models" type="button">Clear learned models</button>
+            <button data-clear="preferences" type="button">Clear player preferences</button>
+            <button data-clear="profiles" type="button">Clear profiles</button>
+            <button data-clear="runtime" type="button">Clear session state</button>
+            <button id="delete-all-data" class="danger" type="button">Delete all extension data</button>
+          </div>
+        </section>
+
         <section id="disclaimer" class="card disclaimer">
           <h2>Disclaimer</h2>
           <p id="disclaimer-text"></p>
@@ -131,6 +153,13 @@
         <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
       </main>
     </div>
+    <dialog id="visual-consent" aria-labelledby="visual-consent-title">
+      <form method="dialog">
+        <h2 id="visual-consent-title">Enable visual monitoring?</h2>
+        <p>The visual watchdog can capture a crop of the active visible tab. Processing stays in this browser: the crop is reduced to a tiny comparison hash in memory, and neither the image nor hash is transmitted. Static video frames can be legitimate, so visual evidence never triggers recovery by itself.</p>
+        <div class="button-row"><button value="cancel" type="submit">Keep disabled</button><button id="accept-visual-consent" value="accept" class="primary" type="submit">Enable visual watchdog</button></div>
+      </form>
+    </dialog>
     <script src="options.js"></script>
   </body>
 </html>

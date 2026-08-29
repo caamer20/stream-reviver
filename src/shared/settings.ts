@@ -4,6 +4,7 @@ import { SETTINGS_SCHEMA_VERSION, type EffectiveSettings, type GlobalSettings, t
 
 const SETTINGS_KEY = "streamReviverSettings";
 const ACK_KEY = "streamReviverDisclaimerAcknowledged";
+const VISUAL_ACK_KEY = "streamReviverVisualPrivacyAcknowledgedV1";
 
 const numericBounds: Record<string, [number, number]> = {
   checkIntervalSeconds: [1, 60], healthyCheckIntervalSeconds: [2, 120], suspectCheckIntervalSeconds: [0.5, 10],
@@ -79,12 +80,23 @@ export function matchUrlPattern(url: string, pattern: string): boolean {
 export async function getSettings(): Promise<Settings> {
   const stored = await apiCall<Record<string, unknown>>(ext.storage.sync.get, ext.storage.sync, SETTINGS_KEY);
   const normalized = normalizeSettings(stored[SETTINGS_KEY]);
-  if (!stored[SETTINGS_KEY] || (stored[SETTINGS_KEY] as any)?.schemaVersion !== SETTINGS_SCHEMA_VERSION) await setSettings(normalized);
+  const visualAcknowledged = await getVisualPrivacyAcknowledged();
+  let visualSettingRemoved = false;
+  if (!visualAcknowledged) {
+    if (normalized.enableVisualWatchdog) visualSettingRemoved = true;
+    normalized.enableVisualWatchdog = false;
+    for (const site of Object.values(normalized.perSite)) if (site.enableVisualWatchdog === true) { site.enableVisualWatchdog = false; visualSettingRemoved = true; }
+  }
+  if (!stored[SETTINGS_KEY] || (stored[SETTINGS_KEY] as any)?.schemaVersion !== SETTINGS_SCHEMA_VERSION || visualSettingRemoved) await setSettings(normalized);
   return normalized;
 }
 
 export async function setSettings(settings: Settings): Promise<Settings> {
   const normalized = normalizeSettings(settings);
+  if (!await getVisualPrivacyAcknowledged()) {
+    normalized.enableVisualWatchdog = false;
+    for (const site of Object.values(normalized.perSite)) if (site.enableVisualWatchdog === true) site.enableVisualWatchdog = false;
+  }
   await apiCall<void>(ext.storage.sync.set, ext.storage.sync, { [SETTINGS_KEY]: normalized });
   return normalized;
 }
@@ -95,6 +107,13 @@ export async function getDisclaimerAcknowledged(): Promise<boolean> {
 }
 export async function setDisclaimerAcknowledged(value: boolean): Promise<void> {
   await apiCall<void>(ext.storage.local.set, ext.storage.local, { [ACK_KEY]: value });
+}
+export async function getVisualPrivacyAcknowledged(): Promise<boolean> {
+  const stored = await apiCall<Record<string, unknown>>(ext.storage.local.get, ext.storage.local, VISUAL_ACK_KEY);
+  return stored[VISUAL_ACK_KEY] === true;
+}
+export async function setVisualPrivacyAcknowledged(value: boolean): Promise<void> {
+  await apiCall<void>(ext.storage.local.set, ext.storage.local, { [VISUAL_ACK_KEY]: value });
 }
 export function isSafeOrigin(origin: string): boolean {
   if (origin === "file://") return true;

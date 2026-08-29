@@ -69,7 +69,9 @@ test("empty non-growing buffer diagnoses underrun", () => {
 
 test("WebRTC fatal protocol errors get a typed diagnosis", () => {
   const sample = { ...base, protocol: { kind: "WEBRTC" as const, observedAt: Date.now(), fatalError: "connection failed" } };
-  assert.equal(diagnoseFailure(sample, trends([sample]), settings).kind, "WEBRTC_NETWORK_FAILURE");
+  const diagnosis = diagnoseFailure(sample, trends([sample]), settings);
+  assert.equal(diagnosis.kind, "WEBRTC_NETWORK_FAILURE");
+  assert.equal(diagnosis.recoverySafe, false);
 });
 
 test("failure-specific policy seeks live before reloading", () => {

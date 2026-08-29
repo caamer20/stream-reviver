@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-i18n-title="popupTitle">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,7 +10,7 @@
     <header>
       <div class="brand-mark" aria-hidden="true">▶</div>
       <div>
-        <h1>Stream Reviver</h1>
+        <h1 data-i18n="extensionName">Stream Reviver</h1>
         <p id="site-label">Current site</p>
       </div>
     </header>
@@ -28,8 +28,7 @@
           <strong id="status-title">Loading…</strong>
           <p id="status-detail">Reading this tab’s status.</p>
           <div id="confidence-wrap" class="confidence" hidden><span><i id="confidence-bar"></i></span><small id="confidence-label"></small></div>
-          <ul id="evidence" class="evidence"></ul>
-          <dl id="status-meta" class="status-meta"><div><dt>Diagnosis</dt><dd id="diagnosis">—</dd></div><div><dt>Stream</dt><dd id="stream-kind">—</dd></div><div><dt>Live lag</dt><dd id="live-lag">—</dd></div><div><dt>Buffer</dt><dd id="buffer-ahead">—</dd></div></dl>
+          <details class="advanced-status"><summary data-i18n="advancedStatus">Technical details</summary><ul id="evidence" class="evidence"></ul><dl id="status-meta" class="status-meta"><div><dt>Diagnosis</dt><dd id="diagnosis">—</dd></div><div><dt>Stream</dt><dd id="stream-kind">—</dd></div><div><dt>Live lag</dt><dd id="live-lag">—</dd></div><div><dt>Buffer</dt><dd id="buffer-ahead">—</dd></div></dl></details>
         </div>
       </section>
 
@@ -61,9 +60,9 @@
     </main>
 
     <footer>
-      <button id="open-settings" class="link" type="button">Settings</button>
+      <button id="open-settings" class="link" type="button" data-i18n="settings">Settings</button>
       <span aria-hidden="true">•</span>
-      <button id="open-disclaimer" class="link" type="button">Disclaimer</button>
+      <button id="open-disclaimer" class="link" type="button" data-i18n="disclaimer">Disclaimer</button>
       <p>Works only on sites you explicitly enable.</p>
     </footer>
     <script src="popup.js"></script>

@@ -1,0 +1,28 @@
+name: Browser E2E
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browsers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Chromium behavioral scenarios
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: npm run test:e2e
+      - name: Firefox manifest and temporary install
+        env:
+          FIREFOX_BIN: /usr/bin/firefox
+        run: npm run test:firefox

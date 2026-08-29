@@ -6,7 +6,7 @@
 }
 
 * { box-sizing: border-box; }
-body { width: 390px; margin: 0; background: linear-gradient(180deg, #171a27, #11131c 46%); }
+body { width: min(390px, 100vw); margin: 0; background: linear-gradient(180deg, #171a27, #11131c 46%); }
 header { display: flex; gap: 11px; align-items: center; padding: 18px 18px 13px; border-bottom: 1px solid #292d3c; }
 .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border: 3px solid #8d70ee; border-radius: 50%; background: #24203d; color: white; font-size: 14px; }
 h1 { margin: 0; font-size: 17px; letter-spacing: .01em; }
@@ -24,6 +24,8 @@ main { padding: 14px 16px 10px; }
 .status-meta div { min-width: 0; }
 .status-meta dt { color: #8f98ad; }
 .status-meta dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: capitalize; }
+.advanced-status { margin-top: 7px; }
+.advanced-status summary { color: #b9a8f3; font-size: 11px; cursor: pointer; }
 .status-dot { flex: 0 0 auto; width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; background: #6b7280; box-shadow: 0 0 0 3px rgba(107,114,128,.18); }
 .status-dot.healthy { background: #43c983; box-shadow: 0 0 0 3px rgba(67,201,131,.15); }
 .status-dot.warning { background: #f0a53b; box-shadow: 0 0 0 3px rgba(240,165,59,.15); }
@@ -41,6 +43,7 @@ input:disabled, button:disabled { cursor: not-allowed; opacity: .48; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
 button { border: 1px solid #3b4054; border-radius: 8px; padding: 9px 10px; background: #242837; color: #edf0fa; font: inherit; font-weight: 650; cursor: pointer; }
 button:hover:not(:disabled) { border-color: #8064df; background: #292c42; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid #a993ff; outline-offset: 2px; }
 button.primary { width: 100%; border-color: #8064df; background: #6f48e8; }
 .feedback { min-height: 18px; margin: 7px 1px 0; color: #f0a53b; font-size: 12px; }
 .recovery-controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #2c3040; }
@@ -64,3 +67,5 @@ footer { padding: 10px 16px 14px; text-align: center; color: #858da2; font-size:
 footer .link { border: 0; padding: 3px; background: none; color: #b9a8f3; font-size: 12px; font-weight: 600; }
 footer p { margin: 4px 0 0; }
 [hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+@media (forced-colors: active) { button, select, .status-card, .notice { border: 1px solid ButtonText; } .status-dot { forced-color-adjust: none; } }

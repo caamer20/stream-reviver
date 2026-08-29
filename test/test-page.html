@@ -35,6 +35,14 @@
           <button data-mode="recovery"><strong>Retry-button recovery</strong><small>A configured retry control clears an error and starts playback.</small></button>
           <button data-mode="access"><strong>Access interruption</strong><small>A sign-in dialog must pause all automatic recovery.</small></button>
           <button data-mode="replace"><strong>Player replacement</strong><small>A healthy player is replaced during playback.</small></button>
+          <button data-mode="paused"><strong>Paused video</strong><small>A valid player is intentionally paused and must never recover automatically.</small></button>
+          <button data-mode="ended"><strong>Ended VOD</strong><small>A finite clip ends normally and must not be treated as a failed live stream.</small></button>
+          <button data-mode="canvas"><strong>Canvas-only player</strong><small>No HTML video is exposed; monitoring must report limited visibility.</small></button>
+          <button data-mode="nested"><strong>Nested iframe player</strong><small>A healthy stream lives two same-origin frames deep.</small></button>
+          <button data-mode="sandbox"><strong>Sandboxed iframe</strong><small>Exercises restricted-frame compatibility and safe degradation.</small></button>
+          <button data-mode="protocol-spoof"><strong>Untrusted protocol signal</strong><small>A healthy page forges a fatal bridge message; it must not trigger recovery.</small></button>
+          <button data-mode="dangerous-control"><strong>Sensitive control guard</strong><small>A matching retry button inside a sign-in dialog must never be clicked.</small></button>
+          <button data-mode="audio-only"><strong>Audio-only page</strong><small>An audio stream is not misclassified as a controllable video.</small></button>
         </div>
         <details>
           <summary>Optional error-selector test</summary>

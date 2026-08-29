@@ -46,14 +46,28 @@ async function start() {
     readout.textContent = "The extension should report “No video detected” and never reload.";
     return;
   }
-  if (mode === "iframe") {
+  if (mode === "audio-only") {
+    placeholder.textContent = "Audio-only fixture (no HTML video)";
+    const audio = document.createElement("audio");
+    audio.controls = true; audio.setAttribute("aria-label", "Audio-only fixture"); player.append(audio);
+    readout.textContent = "The extension should report no video and never recover automatically.";
+    return;
+  }
+  if (mode === "canvas") {
+    placeholder?.remove(); canvas.hidden = false; startCanvasOnly();
+    readout.textContent = "Animated canvas exposes no controllable HTML video.";
+    return;
+  }
+  if (["iframe", "nested", "sandbox"].includes(mode)) {
     placeholder?.remove();
     const iframe = document.createElement("iframe");
     iframe.className = "test-iframe";
-    iframe.src = "iframe-player.html?mode=healthy";
+    iframe.src = `iframe-player.html?mode=${mode === "nested" ? "nested" : "healthy"}&depth=1`;
     iframe.allowFullscreen = true;
+    iframe.allow = "autoplay; fullscreen; picture-in-picture";
+    if (mode === "sandbox") iframe.sandbox = "allow-scripts";
     player.append(iframe);
-    readout.textContent = "Healthy player is running inside a same-origin iframe";
+    readout.textContent = mode === "nested" ? "Healthy player is two same-origin frames deep" : mode === "sandbox" ? "Player is inside a restricted sandbox" : "Healthy player is running inside a same-origin iframe";
     return;
   }
   if (mode === "spa") {
@@ -90,6 +104,10 @@ async function start() {
     if (mode === "recovery") addRetryRecovery();
     if (mode === "access") addAccessInterruption();
     if (mode === "replace") replacePlayerSoon(recording);
+    if (mode === "paused") setTimeout(() => video.pause(), 1_500);
+    if (mode === "ended") video.loop = false;
+    if (mode === "protocol-spoof") forgeProtocolFailure();
+    if (mode === "dangerous-control") addDangerousControl();
   } catch (error) {
     // MediaRecorder or MediaSource support can vary. The fallback still creates a
     // real HTML5 MediaStream video and stops its track in stall mode.
@@ -100,6 +118,36 @@ async function start() {
     await video.play();
     if (mode === "stall") setTimeout(() => stream.getTracks().forEach((track) => track.stop()), 3500);
   }
+}
+
+function startCanvasOnly() {
+  let frame = 0;
+  const draw = () => {
+    frame += 1;
+    context.fillStyle = `hsl(${frame % 360} 60% 22%)`; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "white"; context.font = "700 48px system-ui"; context.fillText("CANVAS-ONLY PLAYER", 55, 100);
+    context.font = "500 100px monospace"; context.fillText((frame / 60).toFixed(1), 55, 280);
+    requestAnimationFrame(draw);
+  };
+  draw();
+}
+
+function forgeProtocolFailure() {
+  setInterval(() => window.postMessage({
+    channel: "__stream_reviver_protocol_v3__",
+    observation: { kind: "HLS_JS", observedAt: Date.now(), fatalError: "Forged page-world fatal signal" }
+  }, "*"), 1_000);
+}
+
+function addDangerousControl() {
+  const dialog = document.createElement("div");
+  dialog.className = "access-required"; dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true");
+  dialog.textContent = "Sign in required ";
+  const retry = document.createElement("button"); retry.className = "retry-stream"; retry.textContent = "Continue sign in";
+  retry.addEventListener("click", () => { document.documentElement.dataset.sensitiveControlClicked = "true"; });
+  dialog.append(retry); player.append(dialog);
+  const overlay = document.createElement("div"); overlay.className = "simulated-stream-error"; overlay.textContent = "Simulated outage"; player.append(overlay);
+  video.pause();
 }
 
 function addMutedPreview(blob) {

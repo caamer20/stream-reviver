@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-i18n-title="welcomeTitle">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,11 +7,17 @@
     <link rel="stylesheet" href="welcome.css">
   </head>
   <body>
-    <main>
+    <a class="skip-link" href="#welcome-content">Skip to onboarding</a>
+    <main id="welcome-content" tabindex="-1">
       <div class="logo" aria-hidden="true">▶</div>
       <p class="eyebrow">WELCOME TO</p>
-      <h1>Stream Reviver</h1>
+      <h1 data-i18n="extensionName">Stream Reviver</h1>
       <p class="lede">A conservative, opt-in safety net for live HTML5 video streams.</p>
+      <ol class="steps" aria-label="How Stream Reviver works">
+        <li><strong>Enable one site.</strong><span>The browser grants access only to the origin you choose.</span></li>
+        <li><strong>Leave the stream playing.</strong><span>Conservative checks distinguish a sustained failure from ordinary buffering or a pause.</span></li>
+        <li><strong>Stay in control.</strong><span>Recovery starts with soft actions, shows a cancelable reload countdown, and stops at a circuit breaker.</span></li>
+      </ol>
       <section>
         <h2>Before enabling monitoring</h2>
         <p id="disclaimer"></p>

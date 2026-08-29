@@ -1,21 +1,34 @@
 {
   "name": "stream-reviver",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
   "description": "A conservative, opt-in live stream monitor for Chrome and Firefox.",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:development": "node scripts/build.mjs --channel development",
+    "build:beta": "node scripts/build.mjs --channel beta",
+    "build:stable": "node scripts/build.mjs --channel stable",
+    "build:channels": "npm run build:development && npm run build:beta && npm run build:stable",
     "check": "tsc --noEmit",
     "test": "node scripts/test.mjs",
+    "test:coverage": "node scripts/test.mjs --coverage",
     "test:e2e": "node scripts/e2e.mjs",
-    "release:check": "npm run verify && node scripts/release-check.mjs",
+    "test:performance": "node scripts/performance-check.mjs",
+    "test:accessibility": "node scripts/accessibility-check.mjs",
+    "test:soak:smoke": "npm run build && node scripts/soak.mjs --iterations 1",
+    "test:soak": "npm run build && node scripts/soak.mjs --hours 24",
+    "test:firefox": "npm run build && node scripts/firefox-smoke.mjs",
+    "lint:firefox": "npm run build && node scripts/firefox-smoke.mjs --lint-only",
+    "release:check": "npm run check && npm run test:coverage && npm run test:performance && npm run test:accessibility && npm run build:stable && node scripts/release-check.mjs --channel stable",
+    "package": "npm run release:check && node scripts/package.mjs",
     "verify": "npm run check && npm test && npm run build"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.326",
     "@types/node": "^24.3.0",
     "esbuild": "^0.25.9",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "web-ext": "^10.6.0"
   }
 }

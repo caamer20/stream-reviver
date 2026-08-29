@@ -53,9 +53,19 @@ async function bootstrap(): Promise<void> {
       siteModel: context.siteModel ?? null,
       sessionSnapshot: context.sessionSnapshot
     });
-    addAsyncMessageListener((message: RuntimeMessage) => monitor.handleMessage(message));
+    const removeMessageListener = addAsyncMessageListener(async (message: RuntimeMessage) => {
+      const response = await monitor.handleMessage(message);
+      if (message.type === "SHUTDOWN_MONITOR") {
+        removeMessageListener();
+        window.__streamReviverLoaded = false;
+      }
+      return response;
+    });
     if (context.acknowledged) monitor.start();
-  } catch { /* the next navigation retries if the extension background is restarting */ }
+  } catch {
+    // Permit an explicit reinjection to retry if the service worker was waking up.
+    window.__streamReviverLoaded = false;
+  }
 }
 
 class StreamMonitor {
@@ -121,6 +131,8 @@ class StreamMonitor {
   private lastCheckAt = Date.now();
   private recentBackwardSeekUntil = 0;
   private protocolObservation: ProtocolObservation | null = null;
+  private protocolWindowStartedAt = 0;
+  private protocolMessagesInWindow = 0;
   private wakeLock: any = null;
   private lastVisualSampleAt = 0;
   private lastVisualHash = "";
@@ -161,12 +173,15 @@ class StreamMonitor {
     window.addEventListener("online", this.onNetworkChange);
     window.addEventListener("offline", this.onNetworkChange);
     window.addEventListener("message", this.onProtocolMessage);
-    window.addEventListener("pagehide", this.destroy, { once: true });
+    window.addEventListener("pagehide", this.onPageHide);
     void this.check();
   }
 
   async handleMessage(message: RuntimeMessage): Promise<unknown> {
     switch (message.type) {
+      case "SHUTDOWN_MONITOR":
+        this.destroy();
+        return { ok: true };
       case "SETTINGS_CHANGED":
         this.settings = message.settings;
         this.candidates.updateDebounce(message.settings.mutationDebounceMs);
@@ -225,6 +240,8 @@ class StreamMonitor {
       case "BEGIN_ELEMENT_PICKER":
         this.beginPicker(message.field);
         return { ok: true };
+      case "VALIDATE_SELECTOR":
+        return this.validateSelector(message.field, message.selector);
       case "STOP_ELEMENT_PICKER":
         this.stopPicker();
         return { ok: true };
@@ -302,7 +319,7 @@ class StreamMonitor {
           evidence: [{ signal: "visual-freeze", detail: "Three privacy-preserving visual samples matched", weight: 45 }],
           recoverySafe: false, requiresUser: false, observedAt: Date.now()
         } : healthyDiagnosis();
-        await this.report("MONITORING", frozen
+        await this.report("LIMITED_VISIBILITY", frozen
           ? "A non-HTML player may be frozen; visual evidence alone will not trigger automatic recovery"
           : "Observing a non-HTML player visually; automatic recovery requires stronger evidence",
         this.diagnosis.confidence, this.diagnosis.evidence);
@@ -351,7 +368,7 @@ class StreamMonitor {
     this.diagnosis = this.withinGracePeriod()
       ? { kind: "STARTUP_DELAY", alternatives: [], confidence: 0, severity: "info", detail: "Waiting through the page-load grace period", evidence: [], recoverySafe: false, requiresUser: false, observedAt: now }
       : diagnoseFailure(this.observations.latest()!, trends, this.settings);
-    const legacyAssessment = assessVideoHealth({
+    let legacyAssessment = assessVideoHealth({
       explicitError: !!explicitError,
       errorDetail: explicitError,
       withinGrace: this.withinGracePeriod(),
@@ -371,6 +388,9 @@ class StreamMonitor {
       liveEdgeLagSeconds: this.currentLiveLag,
       droppedFrameRatio: quality
     });
+    if (this.primary.ended && this.streamKind === "VOD" && !explicitError) {
+      legacyAssessment = { state: "monitoring", detail: "Finite video ended normally", confidence: 0, evidence: [] };
+    }
     if (this.diagnosis.kind === "NONE" && legacyAssessment.state === "suspected") {
       this.diagnosis = {
         kind: "UNKNOWN_FAILURE", alternatives: [], confidence: legacyAssessment.confidence, severity: "warning",
@@ -395,6 +415,7 @@ class StreamMonitor {
       const now = Date.now();
       if (this.healthySince === null) this.healthySince = now;
       if (this.activeAction && now - this.healthySince < this.settings.recoveryVerificationSeconds * 1000) {
+        this.circuitState = "VERIFYING";
         const remaining = Math.ceil((this.settings.recoveryVerificationSeconds * 1000 - (now - this.healthySince)) / 1000);
         await this.report("RECOVERING", `${recoveryLabel(this.activeAction.action)} appears successful; verifying for ${remaining}s`, 0, []);
         return;
@@ -468,10 +489,12 @@ class StreamMonitor {
       return;
     }
     if (this.nextActionAt && Date.now() < this.nextActionAt) {
+      this.circuitState = "OPEN_COOLDOWN";
       await this.report("RECOVERING", `${detail}; next recovery step in ${Math.ceil((this.nextActionAt - Date.now()) / 1000)}s`,
         confidence, evidence);
       return;
     }
+    if (this.circuitState === "OPEN_COOLDOWN") this.circuitState = "HALF_OPEN";
 
     if (!this.recoveryCycleId) {
       this.recoveryCycleId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
@@ -482,6 +505,7 @@ class StreamMonitor {
       await this.log("recovery-cycle-started", `${this.diagnosis.kind}: ${detail}`, "warning", { recoveryCycleId: this.recoveryCycleId, diagnosis: this.diagnosis });
     }
     if (this.activeAction) {
+      this.circuitState = "HALF_OPEN";
       await this.recordActionOutcome(this.activeAction.action, false, Date.now() - this.activeAction.startedAt);
       await this.log("recovery-verification-failed", `${recoveryLabel(this.activeAction.action)} did not restore playback`, "warning", { action: this.activeAction.action, recoveryCycleId: this.recoveryCycleId });
       this.activeAction = null;
@@ -499,11 +523,12 @@ class StreamMonitor {
     await this.log("recovery-step", `Running ${recoveryLabel(action)}`, "warning", { action, confidence, evidence, recoveryCycleId: this.recoveryCycleId, failureKind: this.recoveryFailureKind, risk: actionRisk(action) });
     const initiated = await this.performRecoveryAction(action, detail, confidence);
     this.recoveryIndex += 1;
-    if (initiated) this.activeAction = { action, startedAt: Date.now() };
+    if (initiated) { this.activeAction = { action, startedAt: Date.now() }; this.circuitState = "VERIFYING"; }
     else await this.recordActionOutcome(action, false, 0);
     if (action !== "PAGE_RELOAD" || !initiated) {
       const backoff = this.settings.recoveryBackoffSeconds[Math.min(this.recoveryIndex - 1, this.settings.recoveryBackoffSeconds.length - 1)] ?? 15;
       this.nextActionAt = Date.now() + jitter(Math.max(backoff, this.settings.recoveryVerificationSeconds) * 1000);
+      if (!initiated) this.circuitState = "OPEN_COOLDOWN";
     }
   }
 
@@ -523,7 +548,7 @@ class StreamMonitor {
       case "PLAY":
         if (!this.primary || this.userPaused) return false;
         try {
-          const playButton = this.queryConfigured(this.settings.playButtonSelector);
+          const playButton = this.safeConfiguredControl(this.settings.playButtonSelector);
           if (playButton) playButton.click();
           await this.primary.play();
           return true;
@@ -692,13 +717,52 @@ class StreamMonitor {
   }
 
   private safeConfiguredControl(selector: string): HTMLElement | null {
-    const element = this.queryConfigured(selector);
-    if (!element || !isVisible(element)) return null;
-    if (element.matches(":disabled,[aria-disabled='true']")) return null;
-    const rect = element.getBoundingClientRect();
-    if (rect.width < 8 || rect.height < 8) return null;
-    if (element.closest("[role='dialog'][aria-modal='true'],dialog[open],form[action*='login' i],[class*='paywall' i],[class*='captcha' i]")) return null;
-    return element;
+    if (!selector) return null;
+    let matches: HTMLElement[];
+    try { matches = [...document.querySelectorAll<HTMLElement>(selector)]; } catch { return null; }
+    const eligible = matches.filter((element) => {
+      if (!isVisible(element) || element.matches(":disabled,[aria-disabled='true']")) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width >= 8 && rect.height >= 8 && !element.closest(
+        "[role='dialog'][aria-modal='true'],dialog[open],form[action*='login' i],[class*='paywall' i],[class*='captcha' i],[id*='captcha' i]"
+      );
+    });
+    // Automatic clicks require one unambiguous, visible, non-sensitive target.
+    return eligible.length === 1 ? eligible[0] : null;
+  }
+
+  private validateSelector(field: SelectorField, selector: string) {
+    if (!selector.trim()) return {
+      ok: true, syntacticallyValid: true, matchCount: 0, visibleCount: 0, riskyCount: 0,
+      frameUrl: location.href, warning: "Empty selector: this custom rule is disabled."
+    };
+    let matches: HTMLElement[];
+    try { matches = [...document.querySelectorAll<HTMLElement>(selector)]; }
+    catch (error) {
+      return {
+        ok: false, syntacticallyValid: false, matchCount: 0, visibleCount: 0, riskyCount: 0,
+        frameUrl: location.href, warning: "", error: `Invalid CSS selector: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300)
+      };
+    }
+    const visible = matches.filter(isVisible);
+    const risky = matches.filter((element) => !!element.closest(
+      "[role='dialog'][aria-modal='true'],dialog[open],form[action*='login' i],[class*='paywall' i],[class*='captcha' i],[id*='captcha' i]"
+    ));
+    const control = ["fullscreenButtonSelector", "playButtonSelector", "retryButtonSelector", "liveButtonSelector"].includes(field);
+    const wrongType = field === "selectedVideoSelector"
+      ? matches.filter((element) => !(element instanceof HTMLVideoElement)).length
+      : control ? matches.filter((element) => !element.matches("button,[role='button'],input[type='button'],input[type='submit']")).length : 0;
+    const warnings: string[] = [];
+    if (!matches.length) warnings.push("No current matches. The selector is valid, but the player may not be loaded yet or may be in another frame.");
+    if (matches.length > 1) warnings.push(`${matches.length} elements match; use a more specific selector to avoid acting on the wrong element.`);
+    if (matches.length && !visible.length) warnings.push("All current matches are hidden.");
+    if (risky.length) warnings.push(`${risky.length} match(es) are inside a login, paywall, CAPTCHA, or modal context and will never be auto-clicked.`);
+    if (wrongType) warnings.push(`${wrongType} match(es) have an unexpected element type for ${selectorLabel(field)}.`);
+    if (!warnings.length) warnings.push(`Selector looks safe and currently matches ${visible.length} visible element${visible.length === 1 ? "" : "s"}.`);
+    return {
+      ok: true, syntacticallyValid: true, matchCount: matches.length, visibleCount: visible.length,
+      riskyCount: risky.length, frameUrl: location.href, warning: warnings.join(" ")
+    };
   }
 
   private isAdTransition(): boolean {
@@ -844,16 +908,16 @@ class StreamMonitor {
   private findVideoContainer(video: HTMLVideoElement): HTMLElement {
     if (this.settings.videoContainerSelector) {
       try {
-        const configured = video.closest<HTMLElement>(this.settings.videoContainerSelector) ?? document.querySelector<HTMLElement>(this.settings.videoContainerSelector);
-        if (configured) return configured;
+        const configured = video.closest<HTMLElement>(this.settings.videoContainerSelector);
+        if (configured && !configured.closest("[role='dialog'][aria-modal='true'],dialog[open],[class*='paywall' i],[class*='captcha' i]")) return configured;
       } catch { /* invalid selector */ }
     }
     return video.parentElement ?? video;
   }
 
   private findFullscreenButton(): HTMLElement | null {
-    const configured = this.queryConfigured(this.settings.fullscreenButtonSelector);
-    if (configured && isVisible(configured)) return configured;
+    const configured = this.safeConfiguredControl(this.settings.fullscreenButtonSelector);
+    if (configured) return configured;
     return [...document.querySelectorAll<HTMLElement>("button,[role='button'],input[type='button']")].find((element) => {
       if (!isVisible(element)) return false;
       // Generic automatic clicks require a clear accessible label. IDs, classes,
@@ -861,7 +925,8 @@ class StreamMonitor {
       // misclassify on arbitrary sites. A configured selector remains authoritative.
       const label = [element.getAttribute("aria-label"), element.getAttribute("title"), element.getAttribute("data-tooltip")]
         .filter((value) => typeof value === "string").join(" ").toLowerCase();
-      return /full[ -]?screen|enter[ -]?full|maximize/.test(label) && !/exit/.test(label);
+      return /full[ -]?screen|enter[ -]?full|maximize/.test(label) && !/exit/.test(label) &&
+        !element.closest("[role='dialog'][aria-modal='true'],dialog[open],form[action*='login' i],[class*='paywall' i],[class*='captcha' i]");
     }) ?? null;
   }
 
@@ -1080,6 +1145,11 @@ class StreamMonitor {
     if (event.source !== window || !event.data || event.data.channel !== "__stream_reviver_protocol_v3__") return;
     const value = event.data.observation as ProtocolObservation | undefined;
     if (!value || !["MSE", "HLS_JS", "DASH_JS", "WEBRTC"].includes(value.kind) || !Number.isFinite(value.observedAt)) return;
+    const now = Date.now();
+    if (Math.abs(now - value.observedAt) > 15_000) return;
+    if (now - this.protocolWindowStartedAt > 10_000) { this.protocolWindowStartedAt = now; this.protocolMessagesInWindow = 0; }
+    this.protocolMessagesInWindow += 1;
+    if (this.protocolMessagesInWindow > 40) return;
     this.protocolObservation = {
       kind: value.kind, observedAt: value.observedAt, readyState: safeText(value.readyState, 50), fatalError: safeText(value.fatalError, 160),
       appendAgeMs: safeNumber(value.appendAgeMs), packetsReceivedDelta: safeNumber(value.packetsReceivedDelta), packetsLostDelta: safeNumber(value.packetsLostDelta),
@@ -1087,7 +1157,14 @@ class StreamMonitor {
     };
   };
 
+  private readonly onPageHide = (event: PageTransitionEvent): void => {
+    // A back-forward-cache page is frozen and later resumed with the same JS
+    // realm. Keeping the monitor intact avoids a permanently inert restored page.
+    if (!event.persisted) this.destroy();
+  };
+
   private readonly destroy = (): void => {
+    if (this.destroyed) return;
     this.destroyed = true;
     if (this.timerId !== null) window.clearTimeout(this.timerId);
     if (this.preferenceTimer !== null) window.clearTimeout(this.preferenceTimer);
@@ -1101,6 +1178,7 @@ class StreamMonitor {
     window.removeEventListener("online", this.onNetworkChange);
     window.removeEventListener("offline", this.onNetworkChange);
     window.removeEventListener("message", this.onProtocolMessage);
+    window.removeEventListener("pagehide", this.onPageHide);
     if (this.wakeLock) void this.wakeLock.release().catch(() => undefined);
   };
 }

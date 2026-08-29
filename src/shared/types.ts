@@ -25,7 +25,8 @@ export type FailureKind =
 export type StreamKind = "CONFIRMED_LIVE" | "LIKELY_LIVE" | "DVR_LIVE" | "VOD" | "UNKNOWN";
 export type LiveIntent = "FOLLOWING_LIVE" | "INTENTIONALLY_BEHIND_LIVE" | "UNKNOWN_LIVE_POSITION";
 export type PlayerType = "AUTO" | "HTML5" | "MSE" | "HLS_JS" | "DASH_JS" | "WEBRTC" | "CANVAS";
-export type CircuitState = "CLOSED" | "HALF_OPEN" | "OPEN_UNTIL" | "OPEN_REQUIRES_USER";
+export type CircuitState = "CLOSED" | "VERIFYING" | "HALF_OPEN" | "OPEN_COOLDOWN" | "OPEN_REQUIRES_USER";
+export type DataClearTarget = "history" | "models" | "preferences" | "profiles" | "runtime" | "all";
 
 export type MonitorState =
   | "DISABLED"
@@ -34,6 +35,7 @@ export type MonitorState =
   | "SNOOZED"
   | "OFFLINE"
   | "NO_VIDEO_FOUND"
+  | "LIMITED_VISIBILITY"
   | "MONITORING"
   | "HEALTHY"
   | "SUSPECTED_DOWN"
@@ -292,6 +294,17 @@ export interface SiteProfile {
   updatedAt: number;
 }
 
+export interface SelectorValidationResult {
+  ok: boolean;
+  syntacticallyValid: boolean;
+  matchCount: number;
+  visibleCount: number;
+  riskyCount: number;
+  frameUrl: string;
+  warning: string;
+  error?: string;
+}
+
 export interface HistoryEvent {
   id: string;
   timestamp: number;
@@ -327,11 +340,15 @@ export type RuntimeMessage =
   | { type: "SAVE_PROFILE"; profile: SiteProfile }
   | { type: "DELETE_PROFILE"; profileId: string }
   | { type: "CLEAR_HISTORY"; tabId?: number }
+  | { type: "CLEAR_DATA"; target: DataClearTarget }
+  | { type: "GET_PRIVACY_STATE" }
+  | { type: "ACKNOWLEDGE_VISUAL_PRIVACY" }
   | { type: "ACKNOWLEDGE_DISCLAIMER" }
   | { type: "UPDATE_GLOBAL_SETTINGS"; patch: Partial<GlobalSettings> }
   | { type: "SET_SITE_ENABLED"; origin: string; enabled: boolean; tabId?: number }
   | { type: "SET_SITE_OVERRIDES"; origin: string; overrides: SiteSettings; replace?: boolean }
   | { type: "SAVE_SITE_SELECTOR"; origin: string; field: SelectorField; selector: string; tabId?: number }
+  | { type: "VALIDATE_SITE_SELECTOR"; origin: string; field: SelectorField; selector: string }
   | { type: "REPORT_STATUS"; status: Omit<FrameStatus, "updatedAt"> }
   | { type: "LOG_HISTORY"; entry: Omit<HistoryEvent, "id" | "timestamp" | "tabId" | "frameId"> }
   | { type: "REQUEST_AUTO_REFRESH"; origin: string; pageUrl: string; reason: string; confidence: number }
@@ -360,6 +377,7 @@ export type RuntimeMessage =
   | { type: "REQUEST_VISUAL_SAMPLE"; rect: { x: number; y: number; width: number; height: number } }
   | { type: "EXTEND_COUNTDOWN"; tabId: number; seconds: number }
   | { type: "CANCEL_TAB_COUNTDOWN"; tabId: number }
+  | { type: "SHUTDOWN_MONITOR" }
   | { type: "SETTINGS_CHANGED"; settings: EffectiveSettings }
   | { type: "START_COUNTDOWN"; seconds: number; reason: string }
   | { type: "EXTEND_COUNTDOWN_IN_PAGE"; seconds: number }
@@ -374,4 +392,5 @@ export type RuntimeMessage =
   | { type: "MAXIMIZE_IFRAME"; manual?: boolean }
   | { type: "RECOVER_IFRAME"; frameToken: string }
   | { type: "BEGIN_ELEMENT_PICKER"; field: SelectorField }
+  | { type: "VALIDATE_SELECTOR"; field: SelectorField; selector: string }
   | { type: "STOP_ELEMENT_PICKER" };

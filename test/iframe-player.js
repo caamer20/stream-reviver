@@ -1,6 +1,16 @@
 const canvas = document.querySelector("canvas");
 const context = canvas.getContext("2d");
 const video = document.querySelector("video");
+const parameters = new URL(location.href).searchParams;
+const depth = Number(parameters.get("depth") || "0");
+if (parameters.get("mode") === "nested" && depth < 2) {
+  document.body.replaceChildren();
+  const iframe = document.createElement("iframe");
+  iframe.src = `iframe-player.html?mode=nested&depth=${depth + 1}`;
+  iframe.allow = "autoplay; fullscreen; picture-in-picture"; iframe.allowFullscreen = true;
+  iframe.style.cssText = "width:100%;height:100%;border:0";
+  document.body.append(iframe);
+} else {
 let frame = 0;
 function draw() {
   frame += 1;
@@ -16,3 +26,4 @@ function draw() {
 draw();
 video.srcObject = canvas.captureStream(30);
 video.play().catch(() => {});
+}

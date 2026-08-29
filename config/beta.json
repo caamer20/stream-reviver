@@ -1,0 +1,6 @@
+{
+  "nameSuffix": "Beta",
+  "descriptionPrefix": "THIS EXTENSION IS FOR BETA TESTING — ",
+  "firefoxId": "stream-reviver-beta@example.local",
+  "includeSourceMaps": false
+}

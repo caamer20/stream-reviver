@@ -1,5 +1,6 @@
 node_modules/
 dist/
+artifacts/
 .test-dist/
 *.zip
 .DS_Store

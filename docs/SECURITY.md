@@ -6,10 +6,10 @@ Stream Reviver protects browsing intent, visited stream URLs, local selectors/pr
 
 ## Main threats and controls
 
-- **Malicious page messages:** runtime messages must use a known type, contain no prototype-pollution keys, stay within depth/item limits, and serialize below 128 KB. MAIN-world bridge data is separately reconstructed field-by-field.
+- **Malicious page/extension messages:** every message uses a per-type exact schema, contains no prototype-pollution keys, stays within depth/item limits, and serializes below 128 KB. The background authorizes each type for a content or extension-page sender and binds claimed origins/URLs to the sender. MAIN-world bridge data is separately reconstructed, freshness/rate limited, and cannot authorize recovery without independent media evidence.
 - **Remote-code injection:** extension CSP permits scripts from self only. Build output contains no `eval`, `new Function`, or remote script reference. Profiles are data-only and unknown fields are removed.
 - **Permission creep:** the release manifest has no persistent host permissions. The user grants an exact origin through the browser permission prompt. Disabling a site unregisters scripts and requests permission removal.
-- **Unsafe synthetic controls:** configured controls must be visible, enabled, meaningfully sized, and outside login/paywall/CAPTCHA modal contexts.
+- **Unsafe synthetic controls:** configured controls must resolve to exactly one visible, enabled, meaningfully sized target outside login/paywall/CAPTCHA modal contexts. Settings provide a live match/risk preview.
 - **Refresh loops:** page/iframe actions have time-window limits, backoff, verification, pre-navigation state, and a circuit breaker.
 - **False recovery:** multi-signal confirmation, confidence thresholds, page grace, pause/access/offline/lifecycle suppression, and diagnosis-specific policies reduce single-signal reactions.
 - **Sensitive screenshots:** visual sampling requires the active visible tab, is opt-in, hashes an 8×8 crop in memory, stores no image, and cannot trigger recovery by itself.
@@ -22,7 +22,7 @@ Stream Reviver protects browsing intent, visited stream URLs, local selectors/pr
 
 ## Release checks
 
-Run `npm run release:check`. It rebuilds, validates Manifest V3, the exact permission set, optional-only host capability, extension CSP, absence of broad `host_permissions`, absence of common dynamic/remote-code constructs, and creates SHA-256 checksums.
+Run `npm run release:check`. It enforces test coverage, performance, accessibility, stable Manifest V3 builds, the exact permission set, optional-only host capability, extension CSP, absence of broad `host_permissions`, absence of common dynamic/remote/network-code constructs, size budgets, localization assets, and SHA-256 checksums. `npm audit --omit=dev` covers shipped dependencies; the documented Mozilla linter-only exception is in `docs/DEPENDENCY_RISK.md`.
 
 ## Reporting and scope
 

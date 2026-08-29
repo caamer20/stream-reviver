@@ -1,8 +1,11 @@
 import { apiCall, ext, originPattern, sendMessage } from "../shared/api";
 import { DEFAULT_SETTINGS, DISCLAIMER } from "../shared/defaults";
+import { localizeDocument } from "../shared/i18n";
 import { getDisclaimerAcknowledged, getSettings, normalizeSettings, setSettings } from "../shared/settings";
 import { normalizeProfile, profileToSiteOverrides } from "../shared/profiles";
-import type { GlobalSettings, HistoryEvent, RecoveryAction, RuntimeMessage, SelectorField, Settings, SiteProfile, SiteSettings } from "../shared/types";
+import type { DataClearTarget, GlobalSettings, HistoryEvent, RecoveryAction, RuntimeMessage, SelectorField, SelectorValidationResult, Settings, SiteProfile, SiteSettings } from "../shared/types";
+
+localizeDocument();
 
 const scalarFields: Array<{ key: keyof GlobalSettings; label: string; type: "checkbox" | "number" }> = [
   ["autoRefresh", "Automatic refresh", "checkbox"], ["autoMaximize", "Automatic maximize", "checkbox"],
@@ -52,6 +55,7 @@ let selectedOrigin: string | null = null;
 let pendingImport: unknown = null;
 let history: HistoryEvent[] = [];
 let profiles: SiteProfile[] = [];
+let visualPrivacyAcknowledged = false;
 let reloading = false;
 void initialize();
 
@@ -78,6 +82,8 @@ function bindEvents(): void {
   byId("reset-settings").addEventListener("click", () => void resetSettings());
   byId("export-diagnostics").addEventListener("click", exportDiagnostics);
   byId("clear-diagnostics").addEventListener("click", () => void clearDiagnostics());
+  document.querySelectorAll<HTMLButtonElement>("[data-clear]").forEach((button) => button.addEventListener("click", () => void clearLocalData(button.dataset.clear as Exclude<DataClearTarget, "all">)));
+  byId("delete-all-data").addEventListener("click", () => void deleteAllData());
   byId("profile-from-site").addEventListener("click", profileFromSite);
   byId("save-profile").addEventListener("click", () => void saveProfile());
   byId("apply-profile").addEventListener("click", () => void applyProfile());
@@ -97,11 +103,13 @@ async function reload(): Promise<void> {
   reloading = true;
   try {
     settings = await getSettings();
+    const privacy = await sendMessage<{ visualPrivacyAcknowledged: boolean }>({ type: "GET_PRIVACY_STATE" } satisfies RuntimeMessage);
+    visualPrivacyAcknowledged = privacy.visualPrivacyAcknowledged;
     [history, profiles] = await Promise.all([
       sendMessage<HistoryEvent[]>({ type: "GET_HISTORY", limit: 500 } satisfies RuntimeMessage),
       sendMessage<SiteProfile[]>({ type: "GET_PROFILES" } satisfies RuntimeMessage)
     ]);
-    renderGlobal(); renderSites(); renderProfiles(); renderDiagnostics(); await renderAcknowledgement();
+    renderGlobal(); renderSites(); renderProfiles(); renderDiagnostics(); renderPrivacy(); await renderAcknowledgement();
   } finally { reloading = false; }
 }
 
@@ -200,7 +208,10 @@ function buildSelectorFields(): void {
     const input = document.createElement("input"); input.id = item.key; input.type = "text"; input.placeholder = item.placeholder; label.append(input);
     const pick = document.createElement("button"); pick.type = "button"; pick.textContent = "Pick on page";
     pick.addEventListener("click", () => void startPicker(item.key));
-    row.append(label, pick); container.append(row);
+    const validate = document.createElement("button"); validate.type = "button"; validate.textContent = "Preview";
+    validate.addEventListener("click", () => void validateSelector(item.key));
+    const result = document.createElement("output"); result.id = `selector-result-${item.key}`; result.className = "selector-result"; result.setAttribute("aria-live", "polite");
+    row.append(label, pick, validate, result); container.append(row);
   }
 }
 
@@ -213,6 +224,7 @@ async function saveGlobal(): Promise<void> {
     proposed.recoveryStrategy = recoveryActions.filter((action) => byId<HTMLInputElement>(`global-action-${action}`).checked);
     if (!proposed.recoveryStrategy.length) throw new Error("Select at least one recovery action.");
     proposed.recoveryBackoffSeconds = parseNumbers(byId<HTMLInputElement>("recoveryBackoffSeconds").value);
+    if (proposed.enableVisualWatchdog && !await ensureVisualConsent()) proposed.enableVisualWatchdog = false;
     if (proposed.showNotifications && !settings.showNotifications) {
       proposed.showNotifications = await apiCall<boolean>(ext.permissions.request, ext.permissions, { permissions: ["notifications"] });
     }
@@ -239,6 +251,8 @@ async function saveSite(): Promise<void> {
     const enable = byId<HTMLInputElement>("site-enabled").checked;
     if (enable && !await getDisclaimerAcknowledged()) throw new Error("Acknowledge the disclaimer before enabling monitoring.");
     const wantsNotifications = byId<HTMLInputElement>("override-showNotifications").checked && byId<HTMLInputElement>("site-showNotifications").checked;
+    const wantsVisual = byId<HTMLInputElement>("override-enableVisualWatchdog").checked && byId<HTMLInputElement>("site-enableVisualWatchdog").checked;
+    if (wantsVisual && !await ensureVisualConsent()) byId<HTMLInputElement>("site-enableVisualWatchdog").checked = false;
     if (enable || wantsNotifications) {
       const pattern = enable ? originPattern(selectedOrigin) : null;
       const request: chrome.permissions.Permissions = {};
@@ -274,6 +288,24 @@ async function startPicker(field: SelectorField): Promise<void> {
     if (!response.ok) throw new Error(response.error || "Could not start the picker.");
     showFeedback("Picker started. Switch to the open site tab and click the desired element; Escape cancels.");
   } catch (error) { showError(error); }
+}
+
+async function validateSelector(field: SelectorField): Promise<void> {
+  if (!selectedOrigin) return;
+  const output = byId<HTMLOutputElement>(`selector-result-${field}`);
+  output.className = "selector-result";
+  output.textContent = "Checking the open site tab…";
+  try {
+    const result = await sendMessage<SelectorValidationResult>({
+      type: "VALIDATE_SITE_SELECTOR", origin: selectedOrigin, field, selector: byId<HTMLInputElement>(field).value.trim()
+    } satisfies RuntimeMessage);
+    if (!result.ok) throw new Error(result.error || "Selector preview was unavailable.");
+    output.classList.toggle("warning", result.riskyCount > 0 || result.matchCount !== 1);
+    output.textContent = `${result.warning}${result.frameUrl ? ` Frame: ${new URL(result.frameUrl).host || "local file"}.` : ""}`;
+  } catch (error) {
+    output.classList.add("warning");
+    output.textContent = error instanceof Error ? error.message : String(error);
+  }
 }
 
 async function removeSite(): Promise<void> {
@@ -390,6 +422,40 @@ async function deleteProfile(): Promise<void> {
 async function clearDiagnostics(): Promise<void> {
   if (!confirm("Clear all locally stored Stream Reviver diagnostic history?")) return;
   await sendMessage({ type: "CLEAR_HISTORY" } satisfies RuntimeMessage); history = []; renderDiagnostics(); showFeedback("Diagnostic history cleared.");
+}
+
+function renderPrivacy(): void {
+  byId("visual-consent-state").textContent = visualPrivacyAcknowledged
+    ? "Visual watchdog privacy acknowledgement recorded locally. The feature remains off unless enabled in settings."
+    : "Visual watchdog privacy acknowledgement has not been given; visual monitoring is forced off.";
+}
+
+async function ensureVisualConsent(): Promise<boolean> {
+  if (visualPrivacyAcknowledged) return true;
+  const dialog = byId<HTMLDialogElement>("visual-consent");
+  dialog.returnValue = "cancel";
+  dialog.showModal();
+  const accepted = await new Promise<boolean>((resolve) => dialog.addEventListener("close", () => resolve(dialog.returnValue === "accept"), { once: true }));
+  if (!accepted) return false;
+  await sendMessage({ type: "ACKNOWLEDGE_VISUAL_PRIVACY" } satisfies RuntimeMessage);
+  visualPrivacyAcknowledged = true;
+  renderPrivacy();
+  return true;
+}
+
+async function clearLocalData(target: Exclude<DataClearTarget, "all">): Promise<void> {
+  if (!confirm(`Clear locally stored ${target}?`)) return;
+  await sendMessage({ type: "CLEAR_DATA", target } satisfies RuntimeMessage);
+  await reload();
+  showFeedback(`${target[0].toUpperCase()}${target.slice(1)} cleared.`);
+}
+
+async function deleteAllData(): Promise<void> {
+  if (!confirm("Delete all Stream Reviver settings, permissions, profiles, diagnostics, preferences, and session state? This cannot be undone.")) return;
+  await sendMessage({ type: "CLEAR_DATA", target: "all" } satisfies RuntimeMessage);
+  selectedOrigin = null;
+  await reload();
+  showFeedback("All extension data was deleted. The disclaimer must be acknowledged again before monitoring.");
 }
 
 async function renderAcknowledgement(): Promise<void> {

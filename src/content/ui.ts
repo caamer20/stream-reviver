@@ -17,8 +17,9 @@ export class UiLayer {
     const panel = document.createElement("section");
     panel.id = "countdown";
     panel.className = "panel countdown";
-    panel.setAttribute("role", "status");
-    panel.innerHTML = `<span class="mark">↻</span><span class="copy"><strong>Stream appears down</strong><span data-count></span><small></small></span><span class="buttons"></span>`;
+    panel.setAttribute("role", "region");
+    panel.setAttribute("aria-label", "Stream recovery countdown");
+    panel.innerHTML = `<span class="mark" aria-hidden="true">↻</span><span class="copy"><strong>Stream appears down</strong><span data-count aria-live="polite"></span><small></small></span><span class="buttons"></span>`;
     panel.querySelector("small")!.textContent = reason;
     const buttons = panel.querySelector(".buttons")!;
     buttons.append(
@@ -158,10 +159,12 @@ const STYLES = `
   .countdown{top:18px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:min(680px,calc(100vw - 24px));padding:12px 14px;border-radius:12px}
   .mark{display:grid;place-items:center;flex:0 0 30px;width:30px;height:30px;border-radius:50%;background:#6f48e8;font-size:19px;font-weight:700}
   .copy{display:block;min-width:160px;flex:1}.copy strong,.copy span,.copy small{display:block}.copy small{color:#b9bfd0;font-size:12px}.buttons{display:flex;gap:6px}
-  button{pointer-events:auto;cursor:pointer;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:8px 10px;background:#303448;font-weight:700}button:hover{background:#3a3f56}button.light{background:#f8fafc;color:#161824}
+  button{pointer-events:auto;cursor:pointer;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:8px 10px;background:#303448;font-weight:700}button:hover{background:#3a3f56}button:focus-visible{outline:3px solid #c4b5fd;outline-offset:2px}button.light{background:#f8fafc;color:#161824}
   .toast{right:18px;bottom:18px;display:flex;align-items:center;gap:12px;max-width:min(450px,calc(100vw - 36px));padding:11px 13px;border-radius:10px}.toast.warning{background:#6b2d1d}.toast.success{background:#165c42}
   .floating{right:18px;top:18px;border-radius:9px;padding:10px 13px}.floating.danger{background:rgba(130,35,35,.96)}
   #picker-outline{position:fixed;pointer-events:none;border:3px solid #9b7df2;background:rgba(111,72,232,.12);box-shadow:0 0 0 99999px rgba(0,0,0,.18)}
   #picker-outline span{position:absolute;left:0;top:-32px;max-width:520px;padding:5px 8px;border-radius:6px;background:#6f48e8;color:white;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font:700 12px/1.4 system-ui}
   @media(max-width:520px){.countdown{align-items:flex-start;flex-wrap:wrap}.buttons{width:100%;justify-content:flex-end}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+  @media(forced-colors:active){.panel,.toast,.floating,button{border:1px solid ButtonText}.mark{forced-color-adjust:none}}
 `;

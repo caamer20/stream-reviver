@@ -26,7 +26,7 @@ Background ── storage + exact-origin registration + badge + privileged actio
 3. Each permitted frame discovers visible videos incrementally and reports a scored status.
 4. The background selects the most relevant frame using playback, size, visibility, and freshness.
 5. A rolling observation window derives trends rather than reacting to a single event.
-6. The classifier emits a typed diagnosis, confidence, evidence, recovery safety, and user-action requirement.
+6. The classifier emits a typed diagnosis, confidence, evidence, recovery safety, and user-action requirement. Page-world hints require isolated media corroboration.
 7. The policy engine filters diagnosis-specific actions through user settings and resource availability.
 8. The monitor executes one action, then verifies sustained health. Failure advances the plan; success records a local outcome.
 9. Reload intent and snapshots are written before navigation. Loop limits survive reload in session storage.
@@ -41,3 +41,5 @@ Background ── storage + exact-origin registration + badge + privileged actio
 - A recovery action is not successful until verification completes.
 - A top-page reload is always loop-limited and preceded by a cancelable countdown.
 - Settings/profile/model data remain local and bounded.
+- Privileged background messages are authorized by sender context and claimed origins are bound to the sender URL.
+- Automatic configured-control clicks require one unambiguous safe target.

@@ -1,0 +1,14 @@
+NAME
+Stream Reviver
+
+SUMMARY
+Detect and safely recover failed live HTML5 streams on sites you explicitly enable.
+
+CATEGORIES
+Other, Tabs
+
+DATA COLLECTION
+Required: none. Stream Reviver does not transmit analytics, technical data, browsing activity, or personal information.
+
+REVIEW NOTES
+Use docs/REVIEWER_GUIDE.md and the generated local fixture. The MV3 Gecko manifest declares data_collection_permissions.required = ["none"]. Optional site access is requested one origin at a time.

@@ -1,11 +1,13 @@
 import { addAsyncMessageListener, apiCall, ext, getOrigin, originPattern, queryActiveTab, sendTabMessage } from "../shared/api";
-import { effectiveSettings, getDisclaimerAcknowledged, getSettings, setDisclaimerAcknowledged, setSettings } from "../shared/settings";
+import { authorizeRuntimeMessage } from "../shared/authorization";
+import { effectiveSettings, getDisclaimerAcknowledged, getSettings, getVisualPrivacyAcknowledged, setDisclaimerAcknowledged, setSettings, setVisualPrivacyAcknowledged } from "../shared/settings";
 import { addActionOutcome, addHealthSample, addSession, addUserFeedback, emptySiteModel } from "../shared/outcomes";
 import { normalizeProfile } from "../shared/profiles";
 import { healthyDiagnosis } from "../shared/diagnosis";
+import { loopUrlKey as urlKey, normalizeLoopEntry as normalizedLoopEntry, type LoopEntry } from "../shared/loop-policy";
 import type {
-  EffectiveSettings, FrameStatus, GlobalSettings, HistoryEvent, LocalSiteModel, MonitorState, PlayerPreferences,
-  PlayerSessionSnapshot, PopupState, RuntimeMessage, SelectorField, Settings, SiteProfile, SiteSettings
+  DataClearTarget, EffectiveSettings, FrameStatus, GlobalSettings, HistoryEvent, LocalSiteModel, MonitorState, PlayerPreferences,
+  PlayerSessionSnapshot, PopupState, RuntimeMessage, SelectorField, SelectorValidationResult, Settings, SiteProfile, SiteSettings
 } from "../shared/types";
 
 const REGISTRATION_PREFIX = "stream_reviver_";
@@ -25,15 +27,6 @@ interface TabRuntimeState {
   countdownSourceFrame?: number;
   lastHistoryKey?: string;
 }
-interface LoopEntry {
-  urlKey: string;
-  attempts: number[];
-  actionAttempts: Record<string, number[]>;
-  pausedUntil: number | null;
-  pendingMaximizeAt: number | null;
-  snoozedUntil: number | null;
-  eventModeUntil: number | null;
-}
 type LoopStore = Record<string, LoopEntry>;
 type StatusStore = Record<string, FrameStatus>;
 
@@ -41,7 +34,9 @@ const runtimeTabs = new Map<number, TabRuntimeState>();
 const protectedTabs = new Set<number>();
 let loopQueue: Promise<void> = Promise.resolve();
 let historyQueue: Promise<void> = Promise.resolve();
+let registrationQueue: Promise<void> = Promise.resolve();
 let settingsCache: Settings | null = null;
+let clearingAllData = false;
 
 ext.runtime.onInstalled.addListener((details) => void initialize(details.reason === "install"));
 ext.runtime.onStartup?.addListener(() => void initialize(false));
@@ -53,15 +48,23 @@ ext.tabs.onRemoved.addListener((tabId) => {
 ext.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "sync" && changes.streamReviverSettings) {
     settingsCache = null;
+    if (clearingAllData) return;
     void loadSettings().then(async (settings) => {
       await syncRegistrations(settings);
       await broadcastSettings(settings);
     });
   }
 });
+ext.permissions?.onRemoved.addListener((permissions) => { if (!clearingAllData) void reconcileRemovedPermissions(permissions.origins ?? []); });
+ext.permissions?.onAdded.addListener((permissions) => void reconcileAddedPermissions(permissions.origins ?? []));
 ext.commands?.onCommand.addListener((command) => void handleCommand(command));
 
 addAsyncMessageListener(async (message: RuntimeMessage, sender) => {
+  const senderUrl = sender.url ?? null;
+  const extensionPage = sender.id === ext.runtime.id && !!senderUrl?.startsWith(ext.runtime.getURL(""));
+  const contentScript = sender.id === ext.runtime.id && sender.tab?.id !== undefined && !extensionPage;
+  const authorization = authorizeRuntimeMessage(message, { extensionPage, contentScript, senderUrl, tabId: sender.tab?.id ?? null });
+  if (!authorization.ok) return { ok: false, error: authorization.error };
   switch (message.type) {
     case "GET_CONTEXT": return getContentContext(message.origin, message.pageUrl, sender.tab?.id);
     case "GET_POPUP_STATE": return getPopupState(message.tabId, message.origin);
@@ -71,11 +74,15 @@ addAsyncMessageListener(async (message: RuntimeMessage, sender) => {
     case "SAVE_PROFILE": return saveProfile(message.profile);
     case "DELETE_PROFILE": return deleteProfile(message.profileId);
     case "CLEAR_HISTORY": return clearHistory(message.tabId);
+    case "CLEAR_DATA": return clearData(message.target);
+    case "GET_PRIVACY_STATE": return { visualPrivacyAcknowledged: await getVisualPrivacyAcknowledged() };
+    case "ACKNOWLEDGE_VISUAL_PRIVACY": await setVisualPrivacyAcknowledged(true); return { ok: true };
     case "ACKNOWLEDGE_DISCLAIMER": await setDisclaimerAcknowledged(true); return { ok: true };
     case "UPDATE_GLOBAL_SETTINGS": return updateGlobalSettings(message.patch);
     case "SET_SITE_ENABLED": return setSiteEnabled(message.origin, message.enabled, message.tabId);
     case "SET_SITE_OVERRIDES": return setSiteOverrides(message.origin, message.overrides, message.replace === true);
     case "SAVE_SITE_SELECTOR": return saveSiteSelector(message.origin, message.field, message.selector, sender.tab?.id ?? message.tabId);
+    case "VALIDATE_SITE_SELECTOR": return validateSiteSelector(message.origin, message.field, message.selector);
     case "REPORT_STATUS": return recordFrameStatus(sender, message.status);
     case "LOG_HISTORY": return appendHistory({ ...message.entry, tabId: sender.tab?.id, frameId: sender.frameId });
     case "REQUEST_AUTO_REFRESH": return requestAutoRefresh(sender, message.origin, message.pageUrl, message.reason, message.confidence);
@@ -183,6 +190,7 @@ async function setSiteEnabled(origin: string, enabled: boolean, tabId?: number) 
   if (!pattern) return { ok: false, error: "This browser page cannot be monitored." };
   settings.perSite[origin] = { ...(settings.perSite[origin] ?? {}), enabled };
   settingsCache = await setSettings(settings);
+  const matchingTabIds = await findOriginTabIds(origin, tabId);
   if (enabled) {
     if (!(await hasOriginPermission(pattern))) {
       settings.perSite[origin].enabled = false;
@@ -190,12 +198,19 @@ async function setSiteEnabled(origin: string, enabled: boolean, tabId?: number) 
       return { ok: false, error: "Site access was not granted." };
     }
     await registerOrigin(origin);
-    if (tabId !== undefined) await injectIntoTab(tabId);
+    // Dynamic registrations apply on the next navigation. Explicit injection
+    // makes enabling from either the popup or options page immediate.
+    await Promise.all(matchingTabIds.map((id) => injectIntoTab(id)));
     await appendHistory({ event: "site-enabled", detail: `Monitoring enabled for ${origin}`, level: "info", url: origin, tabId });
   } else {
-    if (tabId !== undefined) await safeSendAll(tabId, { type: "SETTINGS_CHANGED", settings: effectiveSettings(settingsCache, origin) });
+    await Promise.all(matchingTabIds.map((id) => safeSendAll(id, { type: "SHUTDOWN_MONITOR" })));
     await unregisterOrigin(origin);
-    if (tabId !== undefined) await updateDiscardProtection(tabId, false);
+    for (const id of matchingTabIds) {
+      runtimeTabs.delete(id);
+      await removeTabState(id);
+      await updateDiscardProtection(id, false);
+      await setBadge(id, "", "#6b7280");
+    }
     try { await apiCall<boolean>(ext.permissions.remove, ext.permissions, { origins: [pattern] }); } catch { /* browser UI can revoke */ }
     await appendHistory({ event: "site-disabled", detail: `Monitoring disabled for ${origin}`, level: "info", url: origin, tabId });
   }
@@ -219,6 +234,10 @@ async function saveSiteSelector(origin: string, field: SelectorField, selector: 
 }
 
 async function syncRegistrations(settings: Settings): Promise<void> {
+  return withRegistrationLock(() => syncRegistrationsUnlocked(settings));
+}
+
+async function syncRegistrationsUnlocked(settings: Settings): Promise<void> {
   if (!ext.scripting?.registerContentScripts) return;
   let registered: chrome.scripting.RegisteredContentScript[] = [];
   try { registered = await apiCall(ext.scripting.getRegisteredContentScripts, ext.scripting); } catch { return; }
@@ -235,16 +254,20 @@ async function syncRegistrations(settings: Settings): Promise<void> {
       const hasContent = registered.some((script) => script.id === registrationId(origin));
       const wantsBridge = effectiveSettings(settings, origin).enableAdvancedPlayerBridge;
       const hasBridge = registered.some((script) => script.id === bridgeRegistrationId(origin));
-      if (!hasContent || wantsBridge !== hasBridge) await registerOrigin(origin);
+      if (!hasContent || wantsBridge !== hasBridge) await registerOriginUnlocked(origin);
     }
   }
 }
 
 async function registerOrigin(origin: string): Promise<void> {
+  return withRegistrationLock(() => registerOriginUnlocked(origin));
+}
+
+async function registerOriginUnlocked(origin: string): Promise<void> {
   if (!ext.scripting?.registerContentScripts) throw new Error("Dynamic content-script registration is unavailable.");
   const pattern = originPattern(origin);
   if (!pattern) throw new Error("Unsupported origin");
-  await unregisterOrigin(origin);
+  await unregisterOriginUnlocked(origin);
   const base = { id: registrationId(origin), matches: [pattern], js: ["content.js"], css: ["content.css"], allFrames: true, runAt: "document_start" as const };
   try {
     await apiCall<void>(ext.scripting.registerContentScripts, ext.scripting, [{ ...base, persistAcrossSessions: true, matchOriginAsFallback: true } as any]);
@@ -263,15 +286,67 @@ async function registerOrigin(origin: string): Promise<void> {
   }
 }
 async function unregisterOrigin(origin: string): Promise<void> {
+  return withRegistrationLock(() => unregisterOriginUnlocked(origin));
+}
+async function unregisterOriginUnlocked(origin: string): Promise<void> {
   if (!ext.scripting?.unregisterContentScripts) return;
   try { await apiCall<void>(ext.scripting.unregisterContentScripts, ext.scripting, { ids: [registrationId(origin), bridgeRegistrationId(origin)] }); } catch { /* absent */ }
+}
+async function withRegistrationLock<T>(operation: () => Promise<T>): Promise<T> {
+  const task = registrationQueue.then(operation, operation);
+  registrationQueue = task.then(() => undefined, () => undefined);
+  return task;
 }
 async function injectIntoTab(tabId: number): Promise<void> {
   try { await apiCall(ext.scripting.insertCSS, ext.scripting, { target: { tabId, allFrames: true }, files: ["content.css"] }); } catch { /* present */ }
   try { await apiCall(ext.scripting.executeScript, ext.scripting, { target: { tabId, allFrames: true }, files: ["content.js"] }); } catch { /* restricted frames skipped */ }
 }
+async function findOriginTabIds(origin: string, preferredTabId?: number): Promise<number[]> {
+  const ids = new Set<number>();
+  const tabs = await apiCall<chrome.tabs.Tab[]>(ext.tabs.query, ext.tabs, {}).catch(() => []);
+  for (const tab of tabs) if (tab.id !== undefined && getOrigin(tab.url) === origin) ids.add(tab.id);
+  // Once permission has been revoked, tab URLs may no longer be exposed. The
+  // in-memory frame registry still lets us stop monitors that reported earlier.
+  for (const [id, state] of runtimeTabs) if ([...state.frames.values()].some((status) => status.origin === origin)) ids.add(id);
+  if (preferredTabId !== undefined) ids.add(preferredTabId);
+  return [...ids];
+}
 async function hasOriginPermission(pattern: string): Promise<boolean> {
   try { return await apiCall<boolean>(ext.permissions.contains, ext.permissions, { origins: [pattern] }); } catch { return false; }
+}
+
+async function reconcileRemovedPermissions(patterns: string[]): Promise<void> {
+  if (!patterns.length) return;
+  const settings = await loadSettings();
+  let changed = false;
+  for (const [origin, site] of Object.entries(settings.perSite)) {
+    const pattern = originPattern(origin);
+    if (!site.enabled || !pattern || !patterns.some((removed) => removed === "<all_urls>" || removed === pattern)) continue;
+    site.enabled = false;
+    changed = true;
+    await unregisterOrigin(origin);
+    const tabIds = await findOriginTabIds(origin);
+    await Promise.all(tabIds.map((id) => safeSendAll(id, { type: "SHUTDOWN_MONITOR" })));
+    for (const id of tabIds) {
+      runtimeTabs.delete(id);
+      await removeTabState(id);
+      await updateDiscardProtection(id, false);
+      await setBadge(id, "", "#6b7280");
+    }
+  }
+  if (changed) {
+    settingsCache = await setSettings(settings);
+    await appendHistory({ event: "permission-revoked", detail: "Browser site access was revoked; affected sites were disabled", level: "warning", url: "" });
+  }
+}
+
+async function reconcileAddedPermissions(patterns: string[]): Promise<void> {
+  if (!patterns.length) return;
+  const settings = await loadSettings();
+  for (const [origin, site] of Object.entries(settings.perSite)) {
+    const pattern = originPattern(origin);
+    if (site.enabled && pattern && patterns.some((added) => added === "<all_urls>" || added === pattern)) await registerOrigin(origin).catch(() => undefined);
+  }
 }
 
 async function recordFrameStatus(sender: chrome.runtime.MessageSender, report: Omit<FrameStatus, "updatedAt">) {
@@ -453,6 +528,32 @@ async function startSelectorPicker(origin: string, field: SelectorField) {
   return { ok: true, tabId: tab.id };
 }
 
+async function validateSiteSelector(origin: string, field: SelectorField, selector: string): Promise<SelectorValidationResult> {
+  if (!selector.trim()) return {
+    ok: true, syntacticallyValid: true, matchCount: 0, visibleCount: 0, riskyCount: 0,
+    frameUrl: "", warning: "Empty selector: this custom rule is disabled."
+  };
+  const tabs = await apiCall<chrome.tabs.Tab[]>(ext.tabs.query, ext.tabs, {});
+  const tab = tabs.find((candidate) => getOrigin(candidate.url) === origin && candidate.id !== undefined);
+  if (tab?.id === undefined) return {
+    ok: false, syntacticallyValid: true, matchCount: 0, visibleCount: 0, riskyCount: 0,
+    frameUrl: "", warning: "", error: "Open the configured site in a tab to preview this selector."
+  };
+  const knownFrames = [...(runtimeTabs.get(tab.id)?.frames.keys() ?? [])];
+  const frameIds = [...new Set([selectBestFrame(tab.id), 0, ...knownFrames])];
+  let best: SelectorValidationResult | null = null;
+  for (const frameId of frameIds) {
+    try {
+      const result = await sendTabMessage<SelectorValidationResult>(tab.id, { type: "VALIDATE_SELECTOR", field, selector } satisfies RuntimeMessage, { frameId });
+      if (!best || result.matchCount > best.matchCount || result.visibleCount > best.visibleCount) best = result;
+    } catch { /* this frame may not contain an injected monitor */ }
+  }
+  return best ?? {
+    ok: false, syntacticallyValid: true, matchCount: 0, visibleCount: 0, riskyCount: 0,
+    frameUrl: "", warning: "", error: "The monitor is not active on an open tab for this site. Enable the site and reload it first."
+  };
+}
+
 async function snoozeTab(tabId: number, until: number | null) {
   await withLoopLock(async () => {
     const store = await getLoopStore();
@@ -599,12 +700,72 @@ async function clearHistory(tabId?: number) {
   return { ok: true };
 }
 
+async function clearData(target: DataClearTarget) {
+  if (target === "all") {
+    clearingAllData = true;
+    try {
+      const tabs = await apiCall<chrome.tabs.Tab[]>(ext.tabs.query, ext.tabs, {}).catch(() => []);
+      const tabIds = tabs.flatMap((tab) => tab.id === undefined ? [] : [tab.id]);
+      await Promise.all(tabIds.map((id) => safeSendAll(id, { type: "SHUTDOWN_MONITOR" })));
+      await unregisterAllManagedScripts();
+      await revokeOptionalPermissions();
+      for (const id of [...protectedTabs]) await updateDiscardProtection(id, false);
+      runtimeTabs.clear();
+      await Promise.all([
+        apiCall<void>(ext.storage.sync.clear, ext.storage.sync),
+        apiCall<void>(ext.storage.local.clear, ext.storage.local),
+        ext.storage.session ? apiCall<void>(ext.storage.session.clear, ext.storage.session) : Promise.resolve()
+      ]);
+      settingsCache = null;
+      await Promise.all(tabIds.map((id) => setBadge(id, "", "#6b7280")));
+    } finally { clearingAllData = false; }
+    return { ok: true, target };
+  }
+  if (target === "history") return clearHistory();
+  if (target === "models") await apiCall<void>(ext.storage.local.remove, ext.storage.local, SITE_MODEL_KEY);
+  if (target === "preferences") await apiCall<void>(ext.storage.local.remove, ext.storage.local, PREFERENCES_KEY);
+  if (target === "profiles") await apiCall<void>(ext.storage.local.remove, ext.storage.local, PROFILE_KEY);
+  if (target === "runtime") {
+    const area = ext.storage.session ?? ext.storage.local;
+    await apiCall<void>(area.remove, area, [LOOP_KEY, STATUS_KEY, SNAPSHOT_KEY, SESSION_SEEN_KEY]);
+    runtimeTabs.clear();
+    for (const tabId of [...protectedTabs]) await updateDiscardProtection(tabId, false);
+  }
+  return { ok: true, target };
+}
+
+async function revokeOptionalPermissions(): Promise<void> {
+  if (!ext.permissions?.getAll) return;
+  try {
+    const granted = await apiCall<chrome.permissions.Permissions>(ext.permissions.getAll, ext.permissions);
+    const removable: chrome.permissions.Permissions = {};
+    if (granted.origins?.length) removable.origins = granted.origins;
+    const optional = (granted.permissions ?? []).filter((permission) => permission === "notifications");
+    if (optional.length) removable.permissions = optional;
+    if (removable.origins?.length || removable.permissions?.length) {
+      await apiCall<boolean>(ext.permissions.remove, ext.permissions, removable);
+    }
+  } catch { /* browser may already have removed optional grants */ }
+}
+
+async function unregisterAllManagedScripts(): Promise<void> {
+  return withRegistrationLock(unregisterAllManagedScriptsUnlocked);
+}
+async function unregisterAllManagedScriptsUnlocked(): Promise<void> {
+  if (!ext.scripting?.getRegisteredContentScripts) return;
+  try {
+    const scripts = await apiCall<chrome.scripting.RegisteredContentScript[]>(ext.scripting.getRegisteredContentScripts, ext.scripting);
+    const ids = scripts.map((script) => script.id).filter((id) => id.startsWith(REGISTRATION_PREFIX) || id.startsWith(BRIDGE_REGISTRATION_PREFIX));
+    if (ids.length) await apiCall<void>(ext.scripting.unregisterContentScripts, ext.scripting, { ids });
+  } catch { /* best-effort data reset */ }
+}
+
 async function updateBadge(tabId: number, status: FrameStatus): Promise<void> {
   const settings = await loadSettings();
   const show = status.origin ? effectiveSettings(settings, status.origin).showBadge : settings.showBadge;
   if (!show) { await setBadge(tabId, "", "#6b7280"); return; }
   const badge: Partial<Record<MonitorState, [string, string]>> = {
-    HEALTHY: ["OK", "#198754"], MONITORING: ["…", "#5865a8"], NO_VIDEO_FOUND: ["—", "#6b7280"],
+    HEALTHY: ["OK", "#198754"], MONITORING: ["…", "#5865a8"], LIMITED_VISIBILITY: ["?", "#6b7280"], NO_VIDEO_FOUND: ["—", "#6b7280"],
     OFFLINE: ["OFF", "#6b7280"], SNOOZED: ["Z", "#6b7280"], URL_EXCLUDED: ["—", "#6b7280"],
     SUSPECTED_DOWN: ["!", "#d97706"], RECOVERING: ["↻", "#6f48e8"], COUNTDOWN: ["!", "#d97706"],
     REFRESHING: ["↻", "#6f48e8"], PAUSED_TOO_MANY_REFRESHES: ["×", "#b42318"], ERROR: ["!", "#b42318"], MAXIMIZE_BLOCKED: ["↗", "#d97706"]
@@ -689,14 +850,6 @@ function registrationId(origin: string): string {
   return `${REGISTRATION_PREFIX}${(hash >>> 0).toString(36)}`;
 }
 function bridgeRegistrationId(origin: string): string { return registrationId(origin).replace(REGISTRATION_PREFIX, BRIDGE_REGISTRATION_PREFIX); }
-function urlKey(url: string): string {
-  try { const parsed = new URL(url); return `${parsed.origin}${parsed.pathname}`; } catch { return url.split(/[?#]/)[0]; }
-}
-function normalizedLoopEntry(entry: LoopEntry | undefined, pageUrl: string): LoopEntry {
-  const key = urlKey(pageUrl);
-  if (entry?.urlKey === key) return entry;
-  return { urlKey: key, attempts: [], actionAttempts: {}, pausedUntil: null, pendingMaximizeAt: null, snoozedUntil: entry?.snoozedUntil ?? null, eventModeUntil: entry?.eventModeUntil ?? null };
-}
 function withLoopLock<T>(task: () => Promise<T>): Promise<T> {
   const result = loopQueue.then(task, task); loopQueue = result.then(() => undefined, () => undefined); return result;
 }
@@ -741,6 +894,7 @@ async function updateDiscardProtection(tabId: number, protect: boolean): Promise
 
 async function captureVisualSample(sender: chrome.runtime.MessageSender, rect: { x: number; y: number; width: number; height: number }) {
   if (sender.tab?.id === undefined || !sender.tab.active || rect.width <= 0 || rect.height <= 0) return { ok: false, error: "Visual sampling requires the active visible tab." };
+  if (!await getVisualPrivacyAcknowledged()) return { ok: false, error: "Visual monitoring privacy acknowledgement is required." };
   try {
     const dataUrl = await apiCall<string>(ext.tabs.captureVisibleTab, ext.tabs, sender.tab.windowId, { format: "jpeg", quality: 45 });
     return { ok: true, dataUrl, rect };

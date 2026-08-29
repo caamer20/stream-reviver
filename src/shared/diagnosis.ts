@@ -28,9 +28,20 @@ export function diagnoseFailure(
     return diagnosis("NO_USABLE_SOURCE", 95, evidence[0].detail, evidence, true, false, "critical", now);
   }
   if (sample.protocol?.fatalError) {
-    evidence.push({ signal: "protocol-error", detail: sample.protocol.fatalError, weight: 90 });
     const kind: FailureKind = sample.protocol.kind === "WEBRTC" ? "WEBRTC_NETWORK_FAILURE" : "MEDIA_SOURCE_ERROR";
-    return diagnosis(kind, 95, sample.protocol.fatalError, evidence, true, false, "critical", now);
+    const fresh = Math.abs(now - sample.protocol.observedAt) <= 15_000;
+    const corroborated = fresh && !sample.timeAdvanced && (
+      trends.consecutiveFrozenSamples >= 2 || trends.consecutiveStarvedSamples >= 2 ||
+      sample.readyState < 2 && (sample.bufferAheadSeconds ?? 0) < 0.5
+    );
+    evidence.push({ signal: "protocol-error", detail: sample.protocol.fatalError, weight: corroborated ? 65 : 35 });
+    if (corroborated) {
+      evidence.push({ signal: "media-corroboration", detail: "Independent media observations also show sustained playback failure", weight: 25 });
+      return diagnosis(kind, 90, sample.protocol.fatalError, evidence, true, false, "critical", now);
+    }
+    // MAIN-world messages can be forged by the page. Preserve the typed hint
+    // for diagnostics, but never let it authorize recovery on its own.
+    return diagnosis(kind, fresh ? 45 : 25, `${sample.protocol.fatalError}; waiting for independent media evidence`, evidence, false, false, "warning", now);
   }
   if (sample.ended && trends.streamKind !== "VOD") {
     evidence.push({ signal: "live-ended", detail: "The live player ended unexpectedly", weight: 90 });

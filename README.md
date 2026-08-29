@@ -1,4 +1,4 @@
-# Stream Reviver 3
+# Stream Reviver 3.1
 
 Stream Reviver is a privacy-first Chrome and Firefox extension that detects, explains, and safely recovers live-stream failures. It is generic and opt-in: it has no hardcoded streaming sites, analytics, trackers, remote code, or external API calls. A site is monitored only after the user acknowledges the disclaimer, enables that exact origin, and grants that origin permission.
 
@@ -26,6 +26,9 @@ Version 3 moves beyond a simple stall timer. It keeps a rolling observation wind
 - Popup status, diagnosis, evidence, buffer/live lag, event mode, manual controls, snooze, local feedback, and recent events.
 - Full options page with global/per-site settings, selector pickers, profiles, diagnostics, import/export, and reset.
 - Required first-run acknowledgement and visible disclaimer in the popup and settings.
+- Strict sender authorization and origin binding for every privileged runtime message.
+- Granular local-data deletion, permission-revocation reconciliation, safe selector previews, and explicit visual-monitoring consent.
+- English localization source, keyboard/focus/reduced-motion/forced-color support, deterministic release packages, SBOM, and CI/security gates.
 
 ## Project layout
 
@@ -41,17 +44,23 @@ src/
   options/                       complete settings, profiles, diagnostics, import/export
   welcome/                       required first-run disclaimer
   shared/                        schema, migration, validation, policies, models, utilities
+  _locales/                      browser localization messages
+config/                          development, beta, and stable build channels
 scripts/
-  build.mjs                      Chrome/Firefox MV3 builds and local fixture
-  test.mjs                       deterministic unit-test bundler/runner
+  build.mjs                      channel-aware Chrome/Firefox MV3 builds and fixture
+  test.mjs                       deterministic unit tests and executable coverage gate
   e2e.mjs                        real Chromium extension scenarios
-  release-check.mjs              manifest, permission, remote-code, and SHA-256 checks
+  firefox-smoke.mjs              Mozilla lint and temporary-add-on installation
+  performance-check.mjs          classifier/observation/settings performance budgets
+  soak.mjs                       repeatable browser soak runner (24-hour release mode)
+  release-check.mjs              permission, CSP, network-code, size, and checksum checks
+  package.mjs                    deterministic archives and CycloneDX SBOM
 test/                            local HTML media simulator and iframe fixture
 tests/                           health, diagnosis, policy, schema, profile, and security tests
 docs/                            architecture, security, native-companion boundary, test matrix
-dist/chrome/                     generated Chrome unpacked extension
-dist/firefox/                    generated Firefox temporary add-on
-dist/test-page/                  generated local simulator
+dist/chrome/, dist/firefox/      development unpacked builds (legacy convenient layout)
+dist/{development,beta,stable}/  isolated channel outputs
+artifacts/                       generated release ZIPs, hashes, and SBOM (ignored)
 ```
 
 Chrome uses an MV3 service worker. Firefox uses an MV3 non-persistent background script with the same bundle and Gecko metadata declaring no data collection. Firefox 140+ is targeted for the current manifest declaration.
@@ -63,15 +72,27 @@ Requirements: Node.js 20+ and npm.
 ```bash
 npm install
 npm run verify
+npm run test:coverage
+npm run test:performance
+npm run test:accessibility
 npm run test:e2e
+npm run test:firefox
 npm run release:check
+npm run package
 ```
 
 - `npm run check`: strict TypeScript check.
 - `npm test`: deterministic unit/integration tests.
 - `npm run build`: produces both browser builds and the fixture.
 - `npm run test:e2e`: launches an isolated Chromium profile and exercises real extension APIs against localhost.
-- `npm run release:check`: rebuilds, checks permissions/CSP/no dynamic code generation, and writes `dist/checksums.json`.
+- `npm run build:channels`: produces isolated Development, Beta, and Stable Chrome/Firefox builds; stable and beta omit source maps.
+- `npm run test:coverage`: enforces 90% lines, 85% branches, and 90% functions against executable test bundles.
+- `npm run test:performance`: enforces conservative throughput budgets for hot-path pure logic.
+- `npm run test:accessibility`: checks the localization, keyboard-focus, reduced-motion, forced-color, and semantic UI baseline.
+- `npm run test:firefox`: runs Mozilla's linter and installs the build temporarily in headless Firefox.
+- `npm run test:soak:smoke`: runs one repeated-browser soak cycle; `npm run test:soak -- --hours 24` is the long release gate.
+- `npm run release:check`: checks stable permissions, localization, CSP, no dynamic/remote/network code, package size, and SHA-256 inventory.
+- `npm run package`: creates deterministic Chrome, Firefox, and source ZIPs plus a CycloneDX SBOM in `artifacts/`.
 
 The E2E test temporarily adds only its random localhost origin to a copied manifest. Release manifests remain optional-permission-only.
 
@@ -101,7 +122,7 @@ Serve `dist/test-page` over HTTP; extension host permissions do not transfer aut
 python3 -m http.server 8080 --directory dist/test-page
 ```
 
-Open `http://127.0.0.1:8080/test-page.html`, enable that origin, then select scenarios for healthy playback, no video, stall, media error, delayed injection, retry recovery, multiple videos, rapid DOM churn, SPA navigation, iframe playback, access interruption, or player replacement.
+Open `http://127.0.0.1:8080/test-page.html`, enable that origin, then select scenarios for healthy playback, no video/audio-only, stall, media error, delayed injection, retry recovery, multiple videos, rapid DOM churn, SPA navigation, same-origin/nested/sandboxed frames, manual pause, finite-media completion, canvas-only visibility, forged page-world signals, sensitive-control guards, access interruption, or player replacement.
 
 Expected checks:
 
@@ -136,13 +157,13 @@ Adaptive behavior is local and bounded. It activates only after at least three s
 
 Profiles are versioned JSON data. They may contain selectors, URL patterns, declared player type, recovery actions, and HTTPS backup URLs. Import validation strips unknown fields, rejects executable URL schemes, limits sizes, and never interprets code. Applying a profile changes settings only; the user must separately enable and grant the site.
 
-The advanced bridge is off by default. When enabled per site, a data-minimized page-world script observes aggregate MSE append age/errors, hls.js/dash.js presence/errors, and WebRTC decoded/rendered/packet deltas. It does not read media payloads, network addresses, candidates, keys, credentials, or audio/video content. Bridge messages are type/size validated and remain supplemental evidence.
+The advanced bridge is off by default. When enabled per site, a data-minimized page-world script observes aggregate MSE append age/errors, hls.js/dash.js presence/errors, and WebRTC decoded/rendered/packet deltas. It does not read media payloads, network addresses, candidates, keys, credentials, or audio/video content. The website can forge MAIN-world messages, so bridge signals are treated as untrusted hints and cannot authorize recovery without independent media-element evidence.
 
 The visual watchdog is also off by default. It is limited to the active visible tab, reduces a crop to a 64-bit-style perceptual pattern in memory, and discards the screenshot immediately. A static picture can be legitimate, so visual evidence alone never authorizes automatic recovery.
 
 ## Privacy and diagnostics
 
-All settings, history, profiles, measurements, and learned outcomes stay in extension storage. There is no telemetry endpoint. Diagnostic history is bounded and can be disabled or cleared. Exports can contain page URLs and user-defined selectors; review them before sharing.
+All settings, history, profiles, measurements, and learned outcomes stay in extension storage. There is no telemetry endpoint. Diagnostic history is bounded and can be disabled or cleared. The settings page can independently delete history, models, preferences, profiles, session state, or everything—including registered site scripts and acknowledgement state. Exports can contain page URLs and user-defined selectors; review them before sharing.
 
 The extension cannot honestly promise a universal success percentage. Its popup and diagnostics report observed local action outcomes and user-rated false alarms so effectiveness can be measured on the actual sites and players used. See [Security](docs/SECURITY.md) and [Test matrix](docs/TEST_MATRIX.md).
 
@@ -157,6 +178,10 @@ The extension cannot honestly promise a universal success percentage. Its popup 
 - Backup URLs are user-configured handoffs; the extension does not discover mirrors or bypass site controls.
 
 Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bot systems, or terms of service. The optional native-companion concept is intentionally not shipped; its security boundary is documented in [Native companion](docs/NATIVE_COMPANION.md).
+
+## Production status
+
+The repository now contains the complete local release-candidate implementation and enforceable build/test/package pipeline. Stable publication still depends on real-world evidence and third parties: the 24-hour soak, private beta target, independent security/privacy review, public privacy-policy hosting, authorized store signing, and Chrome/Firefox store approval. These are tracked in [Release checklist](docs/RELEASE_CHECKLIST.md), [Validation plan](docs/VALIDATION_PLAN.md), and [Roadmap](ROADMAP.md). They cannot be truthfully marked complete by a local code run.
 
 ## Disclaimer
 

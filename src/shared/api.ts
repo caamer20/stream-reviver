@@ -40,8 +40,8 @@ export function sendTabMessage<T = unknown>(
 
 export function addAsyncMessageListener(
   handler: (message: any, sender: chrome.runtime.MessageSender) => Promise<unknown> | unknown
-): void {
-  ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
+): () => void {
+  const listener = (message: unknown, sender: chrome.runtime.MessageSender, sendResponse: (response?: unknown) => void) => {
     if (!isRuntimeMessage(message)) {
       const response = { ok: false, error: "Invalid or oversized extension message" };
       if (usesPromises) return Promise.resolve(response) as any;
@@ -53,7 +53,9 @@ export function addAsyncMessageListener(
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
     return true;
-  });
+  };
+  ext.runtime.onMessage.addListener(listener);
+  return () => ext.runtime.onMessage.removeListener(listener);
 }
 
 export async function queryActiveTab(): Promise<chrome.tabs.Tab | undefined> {

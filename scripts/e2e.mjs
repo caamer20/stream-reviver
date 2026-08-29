@@ -6,6 +6,8 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 const chromeBinary = await findChromeBinary();
+const enabledScenarios = new Set((process.env.E2E_SCENARIOS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
+let executedScenarios = 0;
 if (!chromeBinary) {
   console.log("Chrome for Testing or Chromium was not found; browser E2E tests skipped.");
   process.exit(0);
@@ -68,6 +70,23 @@ try {
     assert.ok(!events.some((item) => item.event === "page-reload"), "healthy video must not reload");
   });
 
+  await scenario(debugPort, "lifecycle", 8_000, async (events, target) => {
+    assert.ok(events.some((item) => item.event === "status-healthy"), "lifecycle fixture should start healthy");
+    const tabId = await evaluateWorker(debugPort, `(async()=>{const tabs=await chrome.tabs.query({});return tabs.find(t=>t.url?.includes(${JSON.stringify(`mode=lifecycle`)}))?.id??null})()`);
+    assert.ok(Number.isInteger(tabId), "lifecycle fixture tab should be discoverable");
+    const disabled = await evaluateWorker(debugPort, `chrome.runtime.sendMessage({type:'SET_SITE_ENABLED',origin:${JSON.stringify(origin)},enabled:false,tabId:${tabId}})`);
+    assert.equal(disabled?.ok, true, "disabling should stop the open-page monitor");
+    await wait(1_000);
+    const enabled = await evaluateWorker(debugPort, `chrome.runtime.sendMessage({type:'SET_SITE_ENABLED',origin:${JSON.stringify(origin)},enabled:true,tabId:${tabId}})`);
+    assert.equal(enabled?.ok, true, "re-enabling should inject a fresh monitor into the open page");
+    await wait(6_000);
+    const finalEvents = await getHistory(debugPort);
+    assert.ok(finalEvents.some((item) => item.event === "site-disabled"), "disable transition should be recorded");
+    assert.ok(finalEvents.some((item) => item.event === "site-enabled"), "enable transition should be recorded");
+    assert.ok(finalEvents.filter((item) => item.event === "status-healthy").length >= 2, "monitoring should resume without a page reload");
+    assert.ok(target.id, "lifecycle target should remain open during reinjection");
+  });
+
   await scenario(debugPort, "multi", 10_000, async (events) => {
     assert.ok(events.some((item) => item.event === "player-selected" && item.detail.includes("test-video")), "main player should beat the muted preview");
     assert.ok(events.some((item) => item.event === "status-healthy"), "multiple-video page should remain healthy");
@@ -97,10 +116,38 @@ try {
     assert.ok(events.some((item) => item.event === "status-healthy"), "replacement player should become healthy");
   });
 
+  await scenario(debugPort, "paused", 8_000, async (events) => {
+    assert.ok(events.some((item) => item.detail.includes("paused")), "paused video should be identified as intentional/non-actionable");
+    assert.ok(!events.some((item) => item.event === "recovery-step"), "paused video must not trigger recovery");
+  });
+
+  await scenario(debugPort, "ended", 10_000, async (events) => {
+    assert.ok(events.some((item) => item.detail.includes("Finite video ended normally")), "finite ended media should be classified as normal VOD completion");
+    assert.ok(!events.some((item) => item.event === "recovery-step"), "ended VOD must not trigger recovery");
+  });
+
+  await scenario(debugPort, "nested", 9_000, async (events) => {
+    assert.ok(events.some((item) => item.event === "status-healthy" && (item.frameId ?? 0) > 0), "nested iframe player should report healthy from a child frame");
+  });
+
+  await scenario(debugPort, "protocol-spoof", 8_000, async (events) => {
+    assert.ok(!events.some((item) => item.event === "recovery-step"), "an untrusted page-world protocol signal must not authorize recovery");
+    assert.ok(!events.some((item) => item.event === "page-reload"), "an untrusted page-world protocol signal must not reload the page");
+  });
+
+  await scenario(debugPort, "audio-only", 4_000, async (events) => {
+    assert.ok(events.some((item) => item.event === "status-no_video_found"), "audio-only pages should not be misclassified as video streams");
+    assert.ok(!events.some((item) => item.event === "recovery-step"), "audio-only pages must not recover automatically");
+  });
+
   await setTestSettings(debugPort, origin, {
     recoveryStrategy: ["RETRY_BUTTON", "PAGE_RELOAD"],
     errorSelector: ".simulated-stream-error",
     retryButtonSelector: ".retry-stream"
+  });
+  await scenario(debugPort, "dangerous-control", 8_000, async (events) => {
+    assert.ok(events.some((item) => item.detail.includes("Access or consent interruption")), "sensitive modal context should be recognized");
+    assert.ok(!events.some((item) => item.event === "recovery-step"), "matching controls inside sensitive dialogs must not be clicked");
   });
   await scenario(debugPort, "recovery", 11_000, async (events) => {
     assert.ok(events.some((item) => item.event === "recovery-step" && item.metadata?.action === "RETRY_BUTTON"), "configured retry control should be used");
@@ -113,7 +160,7 @@ try {
     assert.equal(events.filter((item) => item.event === "page-reload").length, 1, "loop protection should limit the test to one automatic reload");
   });
 
-  console.log("Browser E2E: 9 scenarios passed (healthy, multi-video, DOM churn, SPA, iframe, access suppression, replacement, verified soft recovery, loop protection)");
+  console.log(`Browser E2E: ${executedScenarios} scenario(s) passed with real extension APIs and deterministic local media fixtures.`);
 } catch (error) {
   console.error(chromeLog);
   throw error;
@@ -124,12 +171,14 @@ try {
 }
 
 async function scenario(debugPort, mode, waitMs, assertion) {
+  if (enabledScenarios.size && !enabledScenarios.has(mode)) return;
+  executedScenarios += 1;
   console.log(`→ browser scenario: ${mode}`);
   await clearRuntime(debugPort);
   const target = await createTarget(debugPort, `${origin}/test-page.html?mode=${mode}`);
   await wait(waitMs);
   const events = await getHistory(debugPort);
-  try { await assertion(events); }
+  try { await assertion(events, target); }
   catch (error) {
     console.error(`Scenario ${mode} history:\n${JSON.stringify(events, null, 2)}`);
     throw error;
@@ -209,7 +258,7 @@ async function isStreamReviverWorker(target) {
       expression: `globalThis.chrome?.runtime?.getManifest?.().name`,
       returnByValue: true
     });
-    return response.result?.result?.value === "Stream Reviver";
+    return String(response.result?.result?.value ?? "").startsWith("Stream Reviver");
   } catch { return false; }
   finally { cdp.close(); }
 }
@@ -275,7 +324,7 @@ async function findChromeBinary() {
     } catch { /* Playwright cache is optional */ }
     candidates.push("/Applications/Chromium.app/Contents/MacOS/Chromium");
   } else {
-    candidates.push("/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome-for-testing");
+    candidates.push("/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome-for-testing", "/usr/bin/google-chrome");
   }
   for (const candidate of candidates.reverse()) {
     try { await stat(candidate); return candidate; } catch { /* next */ }
