@@ -1,6 +1,6 @@
 {
   "name": "stream-reviver",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "private": true,
   "description": "A conservative, opt-in live stream monitor for Chrome and Firefox.",
   "type": "module",

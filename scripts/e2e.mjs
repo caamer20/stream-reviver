@@ -65,6 +65,8 @@ try {
   await setTestSettings(debugPort, origin, {});
   console.log("Test settings initialized");
 
+  await popupScenario(debugPort);
+
   await scenario(debugPort, "healthy", 10_000, async (events) => {
     assert.ok(events.some((item) => item.event === "status-healthy"), "healthy video should reach HEALTHY");
     assert.ok(!events.some((item) => item.event === "page-reload"), "healthy video must not reload");
@@ -165,9 +167,15 @@ try {
   console.error(chromeLog);
   throw error;
 } finally {
-  chrome.kill("SIGTERM");
-  server.close();
-  await rm(temp, { recursive: true, force: true });
+  if (chrome.exitCode === null && chrome.signalCode === null) {
+    chrome.kill("SIGTERM");
+    await Promise.race([
+      new Promise((resolve) => chrome.once("exit", resolve)),
+      wait(2_000)
+    ]);
+  }
+  await new Promise((resolve) => server.close(resolve));
+  await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
 async function scenario(debugPort, mode, waitMs, assertion) {
@@ -185,6 +193,37 @@ async function scenario(debugPort, mode, waitMs, assertion) {
   }
   await fetch(`http://127.0.0.1:${debugPort}/json/close/${target.id}`);
   console.log(`✓ browser scenario: ${mode}`);
+}
+
+async function popupScenario(debugPort) {
+  if (enabledScenarios.size && !enabledScenarios.has("popup")) return;
+  executedScenarios += 1;
+  console.log("→ browser scenario: popup");
+  const worker = await waitForWorker(debugPort);
+  const extensionOrigin = worker.url.match(/^chrome-extension:\/\/[^/]+/)?.[0];
+  if (!extensionOrigin) throw new Error(`Unexpected extension worker URL: ${worker.url}`);
+  const existingTargets = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((response) => response.json());
+  for (const target of existingTargets.filter((item) => item.type === "page" && item.url.startsWith(extensionOrigin))) {
+    await fetch(`http://127.0.0.1:${debugPort}/json/close/${target.id}`).catch(() => undefined);
+  }
+  const popup = await createTarget(debugPort, `${extensionOrigin}/popup.html?e2e=1`);
+  await wait(800);
+  const layout = await evaluateTarget(popup, `(()=>{const body=document.body.getBoundingClientRect();const header=document.querySelector('header')?.getBoundingClientRect();const main=document.querySelector('main')?.getBoundingClientRect();const footer=document.querySelector('footer')?.getBoundingClientRect();return{width:body.width,height:body.height,viewportHeight:innerHeight,headerBottom:header?.bottom,mainTop:main?.top,mainBottom:main?.bottom,footerTop:footer?.top,footerBottom:footer?.bottom,footerVisible:!!footer&&footer.bottom<=innerHeight,settingsVisible:!!document.getElementById('open-settings')?.getClientRects().length,feedback:document.getElementById('feedback')?.textContent||''}})()`);
+  console.log(`Popup layout: ${JSON.stringify(layout)}`);
+  assert.ok(layout.width >= 320 && layout.width <= 390, `popup width should be bounded, got ${layout.width}`);
+  assert.ok(layout.height <= 600, `popup height should stay within browser panel limits, got ${layout.height}`);
+  assert.equal(layout.footerVisible, true, "popup footer should remain visible without scrolling");
+  assert.equal(layout.settingsVisible, true, "settings control should remain visible");
+  assert.ok(!layout.feedback.includes("startup error"), `popup should initialize without a startup error: ${layout.feedback}`);
+  await evaluateTarget(popup, `(()=>{document.getElementById('open-settings').click();return true})()`);
+  await wait(800);
+  const after = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((response) => response.json());
+  const options = after.find((item) => item.type === "page" && item.url.startsWith(`${extensionOrigin}/options.html`));
+  assert.ok(options, "settings should open after the popup awaits openOptionsPage()");
+  if (options) await fetch(`http://127.0.0.1:${debugPort}/json/close/${options.id}`);
+  const stillOpen = after.find((item) => item.id === popup.id);
+  if (stillOpen) await fetch(`http://127.0.0.1:${debugPort}/json/close/${popup.id}`);
+  console.log("✓ browser scenario: popup");
 }
 
 async function setTestSettings(debugPort, siteOrigin, siteOverrides) {
@@ -226,6 +265,17 @@ async function evaluateWorker(debugPort, expression) {
     ?? await createTarget(debugPort, `${extensionOrigin}/options.html?e2e=1`);
   const cdp = new Cdp(target.webSocketDebuggerUrl);
   await withTimeout(cdp.open(), 5000, "CDP WebSocket connection timed out");
+  try {
+    await withTimeout(cdp.send("Runtime.enable"), 5000, "CDP runtime enable timed out");
+    const response = await withTimeout(cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }), 8000, "CDP evaluation timed out");
+    if (response.result?.exceptionDetails) throw new Error(response.result.exceptionDetails.text);
+    return response.result?.result?.value;
+  } finally { cdp.close(); }
+}
+
+async function evaluateTarget(target, expression) {
+  const cdp = new Cdp(target.webSocketDebuggerUrl);
+  await withTimeout(cdp.open(), 5000, "CDP target connection timed out");
   try {
     await withTimeout(cdp.send("Runtime.enable"), 5000, "CDP runtime enable timed out");
     const response = await withTimeout(cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }), 8000, "CDP evaluation timed out");

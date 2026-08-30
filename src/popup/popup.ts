@@ -27,12 +27,17 @@ let mutating = false;
 void initialize();
 
 async function initialize(): Promise<void> {
-  const tab = await queryActiveTab();
-  tabId = tab?.id;
-  origin = getOrigin(tab?.url);
-  el.siteLabel.textContent = origin ? new URL(origin === "file://" ? "file:///" : origin).host || "Local file" : "Restricted browser page";
   bindEvents();
-  await refreshState();
+  try {
+    const tab = await queryActiveTab();
+    tabId = tab?.id;
+    origin = getOrigin(tab?.url);
+    el.siteLabel.textContent = origin ? new URL(origin === "file://" ? "file:///" : origin).host || "Local file" : "Restricted browser page";
+    await refreshState();
+  } catch (error) {
+    el.siteLabel.textContent = "Firefox tab unavailable";
+    el.feedback.textContent = `Extension startup error: ${error instanceof Error ? error.message : String(error)}`;
+  }
   window.setInterval(() => { if (!mutating) void refreshState(false); }, 1000);
 }
 
@@ -68,9 +73,9 @@ function bindEvents(): void {
   el.extendCountdown.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "EXTEND_COUNTDOWN", tabId: requireTab(), seconds: 30 } satisfies RuntimeMessage); }));
   el.cancelCountdown.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "CANCEL_TAB_COUNTDOWN", tabId: requireTab() } satisfies RuntimeMessage); }));
   el.resetAttempts.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "RESET_TAB_ATTEMPTS", tabId: requireTab() } satisfies RuntimeMessage); }));
-  el.openSettings.addEventListener("click", () => openOptions(""));
-  el.openDisclaimer.addEventListener("click", () => openOptions("#disclaimer"));
-  el.openDiagnostics.addEventListener("click", () => openOptions("#diagnostics"));
+  el.openSettings.addEventListener("click", () => void openOptions(""));
+  el.openDisclaimer.addEventListener("click", () => void openOptions("#disclaimer"));
+  el.openDiagnostics.addEventListener("click", () => void openOptions("#diagnostics"));
   el.markCorrect.addEventListener("click", () => markOutcome(true));
   el.markFalseAlarm.addEventListener("click", () => markOutcome(false));
 }
@@ -109,8 +114,8 @@ async function refreshState(showError = true): Promise<void> {
 function render(): void {
   if (!state) return;
   el.acknowledgement.hidden = state.acknowledged;
+  el.controls.hidden = !state.acknowledged;
   el.controls.toggleAttribute("inert", !state.acknowledged);
-  el.controls.style.opacity = state.acknowledged ? "1" : ".45";
   el.globalEnabled.checked = state.settings.enabled;
   el.siteEnabled.checked = state.effective?.siteEnabled ?? false;
   el.autoRefresh.checked = state.effective?.autoRefresh ?? state.settings.autoRefresh;
@@ -162,10 +167,15 @@ function render(): void {
   }));
 }
 
-function openOptions(hash: string): void {
-  if (!hash) void apiCall<void>(ext.runtime.openOptionsPage, ext.runtime);
-  else void apiCall<chrome.tabs.Tab>(ext.tabs.create, ext.tabs, { url: `${ext.runtime.getURL("options.html")}${hash}` });
-  window.close();
+async function openOptions(hash: string): Promise<void> {
+  el.feedback.textContent = "";
+  try {
+    if (!hash) await apiCall<void>(ext.runtime.openOptionsPage, ext.runtime);
+    else await apiCall<chrome.tabs.Tab>(ext.tabs.create, ext.tabs, { url: `${ext.runtime.getURL("options.html")}${hash}` });
+    window.close();
+  } catch (error) {
+    el.feedback.textContent = `Could not open settings: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 function requireTab(): number { if (tabId === undefined) throw new Error("This tab is unavailable."); return tabId; }
 function requireOrigin(): string { if (!origin) throw new Error("This page has no configurable origin."); return origin; }

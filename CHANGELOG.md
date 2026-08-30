@@ -6,6 +6,15 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 - External beta, long-duration soak, independent security review, and browser-store review remain release gates.
 
+## [3.1.1] - 2026-08-29
+
+### Fixed
+
+- Keep the popup within Firefox and Chromium panel-height limits using compact, collapsible secondary sections and an always-visible footer.
+- Await the browser settings-page request before closing the popup, preventing Firefox from canceling the request.
+- Bind popup navigation controls before tab/status initialization so Settings remains available during recoverable API startup failures.
+- Hide monitoring controls until the first-run disclaimer is acknowledged instead of showing an inert oversized panel.
+
 ## [3.1.0] - 2026-08-29
 
 ### Added
