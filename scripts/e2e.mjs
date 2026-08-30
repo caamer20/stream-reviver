@@ -207,11 +207,13 @@ async function popupScenario(debugPort) {
     await fetch(`http://127.0.0.1:${debugPort}/json/close/${target.id}`).catch(() => undefined);
   }
   const popup = await createTarget(debugPort, `${extensionOrigin}/popup.html?e2e=1`);
+  await setTargetViewport(popup, 390, 600);
   await wait(800);
   const layout = await evaluateTarget(popup, `(()=>{const body=document.body.getBoundingClientRect();const header=document.querySelector('header')?.getBoundingClientRect();const main=document.querySelector('main')?.getBoundingClientRect();const footer=document.querySelector('footer')?.getBoundingClientRect();return{width:body.width,height:body.height,viewportHeight:innerHeight,headerBottom:header?.bottom,mainTop:main?.top,mainBottom:main?.bottom,footerTop:footer?.top,footerBottom:footer?.bottom,footerVisible:!!footer&&footer.bottom<=innerHeight,settingsVisible:!!document.getElementById('open-settings')?.getClientRects().length,feedback:document.getElementById('feedback')?.textContent||''}})()`);
   console.log(`Popup layout: ${JSON.stringify(layout)}`);
   assert.ok(layout.width >= 320 && layout.width <= 390, `popup width should be bounded, got ${layout.width}`);
-  assert.ok(layout.height <= 600, `popup height should stay within browser panel limits, got ${layout.height}`);
+  assert.equal(layout.height, 600, `popup height should be explicit, got ${layout.height}`);
+  assert.equal(layout.viewportHeight, 600, `popup test viewport should be 600px high, got ${layout.viewportHeight}`);
   assert.equal(layout.footerVisible, true, "popup footer should remain visible without scrolling");
   assert.equal(layout.settingsVisible, true, "settings control should remain visible");
   assert.ok(!layout.feedback.includes("startup error"), `popup should initialize without a startup error: ${layout.feedback}`);
@@ -281,6 +283,16 @@ async function evaluateTarget(target, expression) {
     const response = await withTimeout(cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }), 8000, "CDP evaluation timed out");
     if (response.result?.exceptionDetails) throw new Error(response.result.exceptionDetails.text);
     return response.result?.result?.value;
+  } finally { cdp.close(); }
+}
+
+async function setTargetViewport(target, width, height) {
+  const cdp = new Cdp(target.webSocketDebuggerUrl);
+  await withTimeout(cdp.open(), 5000, "CDP viewport connection timed out");
+  try {
+    await withTimeout(cdp.send("Emulation.setDeviceMetricsOverride", {
+      width, height, deviceScaleFactor: 1, mobile: false
+    }), 5000, "CDP viewport override timed out");
   } finally { cdp.close(); }
 }
 

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 const root = process.cwd();
@@ -11,6 +11,7 @@ const lint = spawnSync(webExt, ["lint", "--source-dir", "dist/firefox", "--warni
 process.stdout.write(lint.stdout ?? "");
 process.stderr.write(lint.stderr ?? "");
 if (lint.status !== 0) process.exit(lint.status ?? 1);
+await validatePopupDimensions();
 if (process.argv.includes("--lint-only")) process.exit(0);
 
 const firefox = await findFirefox();
@@ -50,4 +51,18 @@ async function findFirefox() {
     try { await stat(candidate); return candidate; } catch { /* try next */ }
   }
   return null;
+}
+
+async function validatePopupDimensions() {
+  const css = await readFile(path.join(root, "dist", "firefox", "popup.css"), "utf8");
+  const htmlRule = css.match(/(?:^|\n)html\s*\{([^}]*)\}/)?.[1] ?? "";
+  const bodyRule = css.match(/(?:^|\n)body\s*\{([^}]*)\}/)?.[1] ?? "";
+  for (const [selector, declarations] of [["html", htmlRule], ["body", bodyRule]]) {
+    if (!/\bwidth\s*:\s*390px\b/.test(declarations) || !/\bheight\s*:\s*600px\b/.test(declarations)) {
+      throw new Error(`Firefox popup ${selector} must have explicit 390px × 600px dimensions.`);
+    }
+    if (/\b(?:100v[wh]|min\([^;]*v[wh])\b/.test(declarations)) {
+      throw new Error(`Firefox popup ${selector} must not depend on viewport-relative dimensions.`);
+    }
+  }
 }

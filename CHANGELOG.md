@@ -6,6 +6,14 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 - External beta, long-duration soak, independent security review, and browser-store review remain release gates.
 
+## [3.1.2] - 2026-08-30
+
+### Fixed
+
+- Prevent Firefox from collapsing the action popup to its minimum dimensions by replacing viewport-relative root sizing with an explicit 390 × 600 CSS-pixel panel.
+- Keep dense popup content scrollable inside the fixed panel while preserving an always-visible Settings and Disclaimer footer.
+- Add release checks that reject viewport-relative popup roots and exercise the popup at Firefox's maximum supported panel height.
+
 ## [3.1.1] - 2026-08-29
 
 ### Fixed
