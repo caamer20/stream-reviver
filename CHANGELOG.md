@@ -6,6 +6,14 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 - External beta, long-duration soak, independent security review, and browser-store review remain release gates.
 
+## [3.1.3] - 2026-08-30
+
+### Changed
+
+- Replace the jagged ring icon with a supersampled blue/violet product mark featuring a crisp play glyph and mint recovery loop.
+- Share the new product mark across the toolbar, popup, options, and first-run experience for consistent branding.
+- Add release validation for every required PNG size, RGBA transparency, manifest mapping, and non-empty rendered output.
+
 ## [3.1.2] - 2026-08-30
 
 ### Fixed

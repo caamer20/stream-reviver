@@ -15,7 +15,7 @@
 html { width: 390px; height: 600px; overflow: hidden; background: #12141d; }
 body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 390px; height: 600px; margin: 0; overflow: hidden; background: linear-gradient(180deg, #171a27, #11131c 46%); }
 header { display: flex; gap: 11px; align-items: center; padding: 18px 18px 13px; border-bottom: 1px solid #292d3c; }
-.brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border: 3px solid #8d70ee; border-radius: 50%; background: #24203d; color: white; font-size: 14px; }
+.brand-mark { width: 38px; height: 38px; filter: drop-shadow(0 5px 10px rgba(41, 24, 112, .38)); }
 h1 { margin: 0; font-size: 17px; letter-spacing: .01em; }
 header p { margin: 1px 0 0; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #aeb5c8; font-size: 12px; }
 main { min-height: 0; padding: 14px 16px 10px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }

@@ -21,10 +21,22 @@ for (const root of roots) {
   assert.match(manifest.content_security_policy.extension_pages, /^script-src 'self'; object-src 'none'$/, `${root} must prohibit remote scripts and objects`);
   assert.ok(!manifest.host_permissions, `${root} must not request persistent broad host access`);
   assert.ok(!manifest.content_scripts, `${root} must use explicit per-origin dynamic registration`);
+  assert.deepEqual(manifest.action.default_icon, manifest.icons, `${root} action and product icon maps must stay aligned`);
   assert.ok(await exists(path.join(root, "_locales", "en", "messages.json")), `${root} must include English locale messages`);
   const buildInfo = JSON.parse(await readFile(path.join(root, "build-info.json"), "utf8"));
   assert.equal(buildInfo.version, packageJson.version, `${root} build metadata version mismatch`);
   if (channel) assert.equal(buildInfo.channel, channel, `${root} build metadata channel mismatch`);
+
+  for (const size of [16, 32, 48, 128]) {
+    const filename = manifest.icons[String(size)];
+    assert.equal(filename, `icon-${size}.png`, `${root} must map the ${size} px product icon`);
+    const icon = await readFile(path.join(root, filename));
+    assert.ok(icon.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex")), `${root}/${filename} must be PNG`);
+    assert.equal(icon.readUInt32BE(16), size, `${root}/${filename} width mismatch`);
+    assert.equal(icon.readUInt32BE(20), size, `${root}/${filename} height mismatch`);
+    assert.equal(icon[25], 6, `${root}/${filename} must preserve RGBA transparency`);
+    assert.ok(icon.length > 300, `${root}/${filename} is unexpectedly simple or empty`);
+  }
 
   let totalBytes = 0;
   for (const file of await walk(root)) {
