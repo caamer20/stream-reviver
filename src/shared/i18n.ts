@@ -1,7 +1,7 @@
 import { ext } from "./api";
 
-export function message(key: string, fallback: string): string {
-  try { return ext.i18n?.getMessage(key) || fallback; } catch { return fallback; }
+export function message(key: string, fallback: string, substitutions?: string | string[]): string {
+  try { return ext.i18n?.getMessage(key, substitutions) || fallback; } catch { return fallback; }
 }
 
 export function localizeDocument(): void {

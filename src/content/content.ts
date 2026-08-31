@@ -1,8 +1,10 @@
 import { addAsyncMessageListener, getOrigin, sendMessage } from "../shared/api";
+import { decideMediaReload, inferPlayerType, type MediaCapabilityProbe } from "../shared/capabilities";
 import { assessVideoHealth, type HealthAssessment } from "../shared/health";
 import { diagnoseFailure, healthyDiagnosis } from "../shared/diagnosis";
-import { ObservationWindow, readBufferAhead, readLiveEdge } from "../shared/observations";
-import { actionRisk, planRecovery } from "../shared/policy";
+import { classifyPlaybackControlFailure, ObservationWindow, readBufferAhead, readLiveEdge, readSeekableStart } from "../shared/observations";
+import { actionRisk, planRecovery, validateAutomaticRecoverySetting, validateRecoveryAction, type RecoveryContext } from "../shared/policy";
+import { PlaybackSessionMetrics } from "../shared/session-metrics";
 import { isUrlEnabled } from "../shared/settings";
 import type {
   CompatibilityReport,
@@ -13,15 +15,20 @@ import type {
   HealthEvidence,
   LocalSiteModel,
   MonitorState,
+  PlaybackIntent,
   PlayerPreferences,
   PlayerSessionSnapshot,
   ProtocolObservation,
   RecoveryAction,
+  RecoveryActionAuthorization,
+  RecoveryResumeContext,
   RuntimeMessage,
   SelectorField
 } from "../shared/types";
 import { VideoCandidateManager, describeVideo } from "./candidates";
+import { inspectEmbeddedVisibility } from "./embedded-visibility";
 import { FrameCoordinator } from "./frame-coordinator";
+import { discoverGenericFullscreenControl, type FullscreenControlDiscovery } from "./fullscreen-controls";
 import { UiLayer } from "./ui";
 
 declare global { interface Window { __streamReviverLoaded?: boolean } }
@@ -34,6 +41,7 @@ if (!window.__streamReviverLoaded) {
 async function bootstrap(): Promise<void> {
   const origin = getOrigin(location.href);
   if (!origin) return;
+  const navigationId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   try {
     const context = await sendMessage<{
       acknowledged: boolean;
@@ -44,14 +52,16 @@ async function bootstrap(): Promise<void> {
       eventModeUntil?: number | null;
       siteModel?: LocalSiteModel | null;
       sessionSnapshot?: PlayerSessionSnapshot;
-    }>({ type: "GET_CONTEXT", origin, pageUrl: location.href } satisfies RuntimeMessage);
-    const monitor = new StreamMonitor(origin, context.settings, {
+      recoveryResume?: RecoveryResumeContext | null;
+    }>({ type: "GET_CONTEXT", origin, pageUrl: location.href, navigationId } satisfies RuntimeMessage);
+    const monitor = new StreamMonitor(origin, navigationId, context.settings, {
       pendingAutoMaximize: context.pendingAutoMaximize,
       preferences: context.preferences,
       snoozedUntil: context.snoozedUntil ?? null,
       eventModeUntil: context.eventModeUntil ?? null,
       siteModel: context.siteModel ?? null,
-      sessionSnapshot: context.sessionSnapshot
+      sessionSnapshot: context.sessionSnapshot,
+      recoveryResume: context.recoveryResume ?? null
     });
     const removeMessageListener = addAsyncMessageListener(async (message: RuntimeMessage) => {
       const response = await monitor.handleMessage(message);
@@ -78,6 +88,8 @@ class StreamMonitor {
   private visualTarget: HTMLElement | null = null;
   private primaryScore = 0;
   private primaryLabel = "";
+  private candidateId = "";
+  private candidateEpoch = 0;
   private timerId: number | null = null;
   private checking = false;
   private checkQueued = false;
@@ -102,11 +114,11 @@ class StreamMonitor {
   private currentRecoveryAction: RecoveryAction | null = null;
   private recoveryPlan: RecoveryAction[] = [];
   private recoveryCycleId: string | null = null;
+  private lastCompletedRecoveryCycleId: string | null = null;
   private recoveryFailureKind: FailureKind = "NONE";
   private circuitState: FrameStatus["circuitState"] = "CLOSED";
-  private activeAction: { action: RecoveryAction; startedAt: number } | null = null;
-  private recoveryStartedAt: number | null = null;
-  private accumulatedRebufferMs = 0;
+  private activeAction: { action: RecoveryAction; startedAt: number; authorization?: RecoveryActionAuthorization } | null = null;
+  private sessionMetrics = new PlaybackSessionMetrics(this.pageStartedAt);
   private diagnosis: FailureDiagnosis = healthyDiagnosis();
   private streamKind: FrameStatus["streamKind"] = "UNKNOWN";
   private liveIntent: FrameStatus["liveIntent"] = "UNKNOWN_LIVE_POSITION";
@@ -126,7 +138,10 @@ class StreamMonitor {
   private lastReportAt = 0;
   private recentInteraction = new WeakMap<HTMLVideoElement, number>();
   private lastUserInputAt = 0;
-  private userPaused = false;
+  private lastPlaybackCommand: "PLAY" | "PAUSE" | "TOGGLE" | null = null;
+  private playbackIntent: PlaybackIntent = "NEVER_PLAYED";
+  private playbackIntentChangedAt = Date.now();
+  private playbackControlError = "";
   private savedPreferences?: PlayerPreferences;
   private lastCheckAt = Date.now();
   private recentBackwardSeekUntil = 0;
@@ -139,16 +154,19 @@ class StreamMonitor {
   private repeatedVisualSamples = 0;
   private preferenceTimer: number | null = null;
   private cssMaximized: HTMLElement | null = null;
+  private countdownIdentity: { recoveryCycleId: string; actionId: string; authorizationNonce: string } | null = null;
   private pickerField: SelectorField | null = null;
   private pickerTarget: HTMLElement | null = null;
   private videoCleanups: Array<() => void> = [];
 
   constructor(
     private readonly origin: string,
+    private readonly navigationId: string,
     settings: EffectiveSettings,
     context: {
       pendingAutoMaximize: boolean; preferences?: PlayerPreferences; snoozedUntil: number | null;
-      eventModeUntil: number | null; siteModel: LocalSiteModel | null; sessionSnapshot?: PlayerSessionSnapshot
+      eventModeUntil: number | null; siteModel: LocalSiteModel | null; sessionSnapshot?: PlayerSessionSnapshot;
+      recoveryResume: RecoveryResumeContext | null
     }
   ) {
     this.settings = settings;
@@ -158,7 +176,27 @@ class StreamMonitor {
     this.eventModeUntil = context.eventModeUntil;
     this.siteModel = context.siteModel;
     this.sessionSnapshot = context.sessionSnapshot;
+    if (context.recoveryResume) {
+      this.recoveryCycleId = context.recoveryResume.cycleId;
+      this.recoveryFailureKind = context.recoveryResume.failureKind;
+      this.activeAction = {
+        action: context.recoveryResume.action,
+        startedAt: context.recoveryResume.startedAt,
+        authorization: {
+          tabId: -1, frameId: -1, navigationId, candidateId: "", candidateEpoch: 0,
+          cycleId: context.recoveryResume.cycleId, actionId: context.recoveryResume.actionId,
+          authorizationNonce: context.recoveryResume.authorizationNonce, action: context.recoveryResume.action,
+          authorizedAt: context.recoveryResume.startedAt, expiresAt: context.recoveryResume.startedAt + 10 * 60_000,
+          countdownDeadline: null
+        }
+      };
+      this.circuitState = "VERIFYING";
+    }
     this.candidates = new VideoCandidateManager(() => void this.check(), settings.mutationDebounceMs);
+  }
+
+  private get userPaused(): boolean {
+    return this.playbackIntent === "USER_PAUSED";
   }
 
   start(): void {
@@ -182,22 +220,70 @@ class StreamMonitor {
       case "SHUTDOWN_MONITOR":
         this.destroy();
         return { ok: true };
-      case "SETTINGS_CHANGED":
-        this.settings = message.settings;
-        this.candidates.updateDebounce(message.settings.mutationDebounceMs);
+      case "RESET_RUNTIME_STATE":
+        this.ui.hideCountdown();
+        this.countdownIdentity = null;
+        this.sessionSnapshot = undefined;
+        this.pendingAutoMaximize = false;
         this.resetRecovery();
         await this.check();
         return { ok: true };
+      case "SETTINGS_CHANGED":
+        this.settings = message.settings;
+        this.candidates.updateDebounce(message.settings.mutationDebounceMs);
+        if (!message.settings.autoMaximize) this.pendingAutoMaximize = false;
+        if (!message.settings.restorePlayerPreferences) this.sessionSnapshot = undefined;
+        // A consumed action must retain its one-use completion identity. New
+        // settings gate all future mutations, while this action finishes only
+        // verification/accounting.
+        if (!this.activeAction) this.resetRecovery();
+        await this.check();
+        return { ok: true };
       case "START_COUNTDOWN":
-        if (window.top === window) this.startCountdown(message.seconds, message.reason);
+        return { ok: true, visible: this.startCountdown(message) };
+      case "EXTEND_COUNTDOWN_IN_PAGE": {
+        const visibleMatch = this.matchesCountdown(message);
+        const activeMatch = this.activeAction?.action === "PAGE_RELOAD" &&
+          this.activeAction.authorization?.cycleId === message.recoveryCycleId &&
+          this.activeAction.authorization.actionId === message.actionId &&
+          this.activeAction.authorization.authorizationNonce === message.authorizationNonce;
+        const visible = visibleMatch ? this.ui.setCountdownDeadline(message.deadline) : false;
+        if (activeMatch && this.activeAction?.authorization) {
+          this.activeAction.authorization.countdownDeadline = Math.max(
+            this.activeAction.authorization.countdownDeadline ?? 0, message.deadline
+          );
+          this.activeAction.authorization.expiresAt = Math.max(
+            this.activeAction.authorization.expiresAt, message.deadline + 60_000
+          );
+        }
+        return { ok: visibleMatch || activeMatch, visible };
+      }
+      case "STOP_COUNTDOWN": {
+        const visibleMatch = this.matchesCountdown(message);
+        const activeMatch = this.activeAction?.action === "PAGE_RELOAD" &&
+          this.activeAction.authorization?.cycleId === message.recoveryCycleId &&
+          this.activeAction.authorization.actionId === message.actionId &&
+          this.activeAction.authorization.authorizationNonce === message.authorizationNonce;
+        if (!visibleMatch && !activeMatch) return { ok: true, ignored: true };
+        if (visibleMatch) {
+          this.ui.hideCountdown();
+          this.countdownIdentity = null;
+        }
+        if (message.cancelRecovery && activeMatch) {
+          this.resetRecovery();
+          this.requestSuppressedUntil = Date.now() + this.settings.stallTimeoutSeconds * 1000;
+        }
+        if (message.reason && (visibleMatch || activeMatch)) this.ui.toast(message.reason, "success");
         return { ok: true };
-      case "EXTEND_COUNTDOWN_IN_PAGE":
-        if (window.top === window) this.ui.extendCountdown(message.seconds);
-        return { ok: true };
-      case "STOP_COUNTDOWN":
-        this.ui.hideCountdown();
-        if (message.reason) this.ui.toast(message.reason, "success");
-        return { ok: true };
+      }
+      case "RESTORE_SESSION_SNAPSHOT": {
+        if (!this.settings.restorePlayerPreferences || !this.primary ||
+          this.recoveryCycleId !== message.snapshot.recoveryCycleId) {
+          return { ok: false, restored: false };
+        }
+        const restored = await this.restoreSessionSnapshot(this.primary, message.snapshot);
+        return { ok: restored, restored };
+      }
       case "SHOW_LOOP_WARNING":
         this.ui.hideCountdown();
         this.ui.toast(message.detail, "warning", 0);
@@ -225,7 +311,7 @@ class StreamMonitor {
         await this.pictureInPicture();
         return { ok: true };
       case "JUMP_TO_LIVE_NOW":
-        await this.performRecoveryAction("LIVE_EDGE", "Manual jump to live", 100);
+        await this.performRecoveryAction("LIVE_EDGE");
         await this.check();
         return { ok: true };
       case "MAXIMIZE_IFRAME":
@@ -233,10 +319,11 @@ class StreamMonitor {
         return { ok: true };
       case "RECOVER_IFRAME":
         if (window.top === window) {
-          const recovered = this.frames.recoverIframe(message.frameToken);
+          const recovered = await this.frames.recoverIframe(message.frameToken);
           if (recovered) this.ui.toast("Reloaded the embedded player frame.", "info");
+          return { ok: recovered, recovered };
         }
-        return { ok: true };
+        return { ok: false, recovered: false };
       case "BEGIN_ELEMENT_PICKER":
         this.beginPicker(message.field);
         return { ok: true };
@@ -278,6 +365,7 @@ class StreamMonitor {
     if (this.lastUrl !== location.href) {
       this.lastUrl = location.href;
       this.pageStartedAt = Date.now();
+      this.sessionMetrics = new PlaybackSessionMetrics(this.pageStartedAt);
       this.resetPrimaryState();
       this.resetRecovery();
       await this.log("navigation", "Monitoring followed a single-page navigation", "info");
@@ -326,7 +414,15 @@ class StreamMonitor {
       } else {
         this.visualTarget = null;
         this.consecutiveFailures = 0;
-        await this.report("NO_VIDEO_FOUND", "No visible HTML5 video found", 0, []);
+        const embedded = !overlayError && window.top === window
+          ? inspectEmbeddedVisibility(this.origin)
+          : null;
+        if (embedded) {
+          this.diagnosis = healthyDiagnosis();
+          await this.report("LIMITED_VISIBILITY", embedded.detail, 0, []);
+        } else {
+          await this.report("NO_VIDEO_FOUND", "No visible HTML5 video found", 0, []);
+        }
       }
       return;
     }
@@ -337,7 +433,12 @@ class StreamMonitor {
     this.lastCheckAt = now;
     const currentTime = finite(this.primary.currentTime);
     const timeAdvanced = Math.abs(currentTime - this.lastCurrentTime) >= 0.15;
-    if (timeAdvanced) this.lastAdvancedAt = now;
+    if (timeAdvanced) {
+      this.lastAdvancedAt = now;
+      if (!this.primary.paused) this.sessionMetrics.progress(now);
+    } else if (!this.primary.paused && (this.primary.readyState < HTMLMediaElement.HAVE_FUTURE_DATA || this.waitingEvents > 0)) {
+      this.sessionMetrics.buffering(now);
+    }
     this.lastCurrentTime = currentTime;
     const frameApiAvailable = typeof (this.primary as any).requestVideoFrameCallback === "function";
     let framesAdvanced = this.settings.detectFrozenFrames && frameApiAvailable
@@ -358,8 +459,12 @@ class StreamMonitor {
       timestamp: now, currentTime, duration: this.primary.duration, paused: this.primary.paused, ended: this.primary.ended,
       readyState: this.primary.readyState, networkState: this.primary.networkState, timeAdvanced, framesAdvanced,
       presentedFrames: this.presentedFrames, droppedFrameRatio: quality, bufferAheadSeconds: this.currentBufferAhead,
-      liveEdge: edge, liveEdgeLagSeconds: this.currentLiveLag, waitingEvents: this.waitingEvents, explicitError,
-      online: navigator.onLine, hidden: document.hidden, userPaused: this.userPaused,
+      seekableStart: readSeekableStart(this.primary), liveEdge: edge, liveEdgeLagSeconds: this.currentLiveLag,
+      waitingEvents: this.waitingEvents, explicitError,
+      online: navigator.onLine, hidden: this.settings.onlyWhenTabVisible && document.hidden, userPaused: this.userPaused,
+      playbackIntent: this.playbackIntent,
+      playbackIntentDurationMs: Math.max(0, now - this.playbackIntentChangedAt),
+      playbackControlError: this.playbackControlError,
       recentBackwardSeek: Date.now() < this.recentBackwardSeekUntil, accessInterruption: interruption,
       adTransition: this.isAdTransition(), lifecycleGapMs, protocol: this.protocolObservation
     });
@@ -401,11 +506,18 @@ class StreamMonitor {
     await this.handleAssessment(assessment);
     await this.updateWakeLock(assessment.state === "healthy");
 
-    if (this.pendingAutoMaximize && !this.maximizeAttempted) {
+    const maximizeDiscoveryDwellMs = Math.max(1_500, Math.min(5_000, this.settings.mutationDebounceMs * 3));
+    if (this.settings.enabled && this.settings.siteEnabled && this.settings.autoMaximize &&
+      this.pendingAutoMaximize && !this.maximizeAttempted && this.primary &&
+      Date.now() - this.primarySelectedAt >= maximizeDiscoveryDwellMs) {
       this.maximizeAttempted = true;
-      const response = await sendMessage<{ claimed: boolean }>({ type: "CLAIM_AUTO_MAXIMIZE", pageUrl: location.href } satisfies RuntimeMessage)
-        .catch(() => ({ claimed: false }));
-      if (response.claimed) await this.maximizePrimary(false);
+      const recoveryCycleId = (this.recoveryCycleId ?? this.lastCompletedRecoveryCycleId)?.trim();
+      if (recoveryCycleId) {
+        const response = await sendMessage<{ claimed: boolean }>({
+          type: "CLAIM_AUTO_MAXIMIZE", pageUrl: location.href, recoveryCycleId
+        } satisfies RuntimeMessage).catch(() => ({ claimed: false }));
+        if (response.claimed) await this.maximizePrimary(false);
+      }
       this.pendingAutoMaximize = false;
     }
   }
@@ -425,21 +537,37 @@ class StreamMonitor {
       this.consecutiveFailures = 0;
       this.refreshRequested = false;
       if (this.activeAction) {
-        if (this.recoveryStartedAt !== null) this.accumulatedRebufferMs += Math.max(0, now - this.recoveryStartedAt);
-        await this.recordActionOutcome(this.activeAction.action, true, now - this.activeAction.startedAt);
-        await this.log("recovery-verified", `${recoveryLabel(this.activeAction.action)} restored sustained playback`, "success", { action: this.activeAction.action, recoveryCycleId: this.recoveryCycleId, failureKind: this.recoveryFailureKind });
+        const outcome = await this.recordActionOutcome(this.activeAction.action, true, now - this.activeAction.startedAt);
+        if (!outcome.terminal) {
+          this.circuitState = "VERIFYING";
+          await this.report("RECOVERING", "Playback is healthy; waiting for the recovery coordinator to verify ownership", 0, []);
+          return;
+        }
+        if (outcome.success === true) {
+          this.lastCompletedRecoveryCycleId = this.activeAction.authorization?.cycleId ?? this.recoveryCycleId;
+          await this.log("recovery-verified", `${recoveryLabel(this.activeAction.action)} restored sustained playback`, "success", { action: this.activeAction.action, recoveryCycleId: this.recoveryCycleId, failureKind: this.recoveryFailureKind });
+        } else {
+          await this.log("recovery-verification-unlinked", "Playback became healthy after the recovery transaction had already closed", "info");
+        }
       }
       this.resetRecovery(false);
       this.diagnosis = healthyDiagnosis(now);
       await this.report("HEALTHY", assessment.detail, assessment.confidence, assessment.evidence);
       if (!this.successReported && now - this.healthySince >= this.settings.successResetSeconds * 1000) {
         this.successReported = true;
-        await sendMessage({ type: "PLAYBACK_SUCCESS", pageUrl: location.href } satisfies RuntimeMessage).catch(() => undefined);
+        const metrics = this.sessionMetrics.snapshot(now);
+        await sendMessage({
+          type: "PLAYBACK_SUCCESS", pageUrl: location.href,
+          recoveryCycleId: this.lastCompletedRecoveryCycleId ?? undefined
+        } satisfies RuntimeMessage).catch(() => undefined);
         await sendMessage({
           type: "RECORD_HEALTH_SAMPLE", origin: this.origin,
-          sample: { startupMs: Math.max(0, now - this.pageStartedAt), rebufferMs: this.accumulatedRebufferMs, liveLagSeconds: this.currentLiveLag, timestamp: now }
+          sample: { startupMs: metrics.startupMs, rebufferMs: metrics.rebufferMs, liveLagSeconds: this.currentLiveLag, timestamp: now }
         } satisfies RuntimeMessage).catch(() => undefined);
-        await sendMessage({ type: "CLEAR_SESSION_SNAPSHOT", origin: this.origin } satisfies RuntimeMessage).catch(() => undefined);
+        await sendMessage({
+          type: "CLEAR_SESSION_SNAPSHOT", origin: this.origin,
+          recoveryCycleId: this.lastCompletedRecoveryCycleId ?? undefined
+        } satisfies RuntimeMessage).catch(() => undefined);
         await this.log("attempts-reset", "Sustained healthy playback cleared recovery history", "success");
       }
       return;
@@ -480,12 +608,19 @@ class StreamMonitor {
   }
 
   private async processFailure(detail: string, confidence: number, evidence: HealthEvidence[]): Promise<void> {
-    if (!this.settings.autoRefresh) {
+    this.sessionMetrics.buffering(Date.now());
+    if (!this.settings.autoRecover) {
       await this.report("SUSPECTED_DOWN", `${detail}; automatic recovery is disabled`, confidence, evidence, true);
       return;
     }
     if (Date.now() < this.requestSuppressedUntil) {
       await this.report("SUSPECTED_DOWN", `${detail}; recovery was recently canceled`, confidence, evidence);
+      return;
+    }
+    if (this.activeAction?.action === "PAGE_RELOAD" && this.activeAction.authorization?.countdownDeadline &&
+      Date.now() <= this.activeAction.authorization.countdownDeadline + 2_000) {
+      const remaining = Math.max(0, Math.ceil((this.activeAction.authorization.countdownDeadline - Date.now()) / 1000));
+      await this.report("COUNTDOWN", `${detail}; page reload in ${remaining}s`, confidence, evidence);
       return;
     }
     if (this.nextActionAt && Date.now() < this.nextActionAt) {
@@ -496,20 +631,32 @@ class StreamMonitor {
     }
     if (this.circuitState === "OPEN_COOLDOWN") this.circuitState = "HALF_OPEN";
 
+    if (this.activeAction) {
+      const failedAction = this.activeAction;
+      this.circuitState = "HALF_OPEN";
+      const outcome = await this.recordActionOutcome(
+        failedAction.action, false, Date.now() - failedAction.startedAt, failedAction.authorization
+      );
+      if (!outcome.terminal) {
+        await this.report("RECOVERING", "Waiting for the recovery coordinator to reconcile the active player", confidence, evidence);
+        return;
+      }
+      await this.log("recovery-verification-failed", `${recoveryLabel(failedAction.action)} did not restore playback`, "warning", { action: failedAction.action, recoveryCycleId: this.recoveryCycleId });
+      this.activeAction = null;
+      // A page reload is the terminal action for one recovery transaction. A
+      // still-broken post-navigation player starts a fresh cycle, while rolling
+      // budgets retain the earlier attempt and prevent loops.
+      if (failedAction.action === "PAGE_RELOAD") this.resetRecovery();
+    }
+
     if (!this.recoveryCycleId) {
       this.recoveryCycleId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
       this.recoveryFailureKind = this.diagnosis.kind;
-      this.recoveryPlan = planRecovery(this.diagnosis.kind, this.settings, this.siteModel);
+      this.recoveryPlan = planRecovery(this.diagnosis.kind, this.settings, this.siteModel, this.recoveryContext());
       this.recoveryIndex = 0;
-      this.recoveryStartedAt = Date.now();
       await this.log("recovery-cycle-started", `${this.diagnosis.kind}: ${detail}`, "warning", { recoveryCycleId: this.recoveryCycleId, diagnosis: this.diagnosis });
     }
-    if (this.activeAction) {
-      this.circuitState = "HALF_OPEN";
-      await this.recordActionOutcome(this.activeAction.action, false, Date.now() - this.activeAction.startedAt);
-      await this.log("recovery-verification-failed", `${recoveryLabel(this.activeAction.action)} did not restore playback`, "warning", { action: this.activeAction.action, recoveryCycleId: this.recoveryCycleId });
-      this.activeAction = null;
-    }
+    if (!this.recoveryPlan.length) this.recoveryPlan = planRecovery(this.recoveryFailureKind, this.settings, this.siteModel, this.recoveryContext());
     const action = this.recoveryPlan[this.recoveryIndex];
     if (!action) {
       this.circuitState = "OPEN_REQUIRES_USER";
@@ -521,23 +668,71 @@ class StreamMonitor {
     await this.report(action === "PAGE_RELOAD" ? "SUSPECTED_DOWN" : "RECOVERING",
       `${detail}; recovery step: ${recoveryLabel(action)}`, confidence, evidence, true);
     await this.log("recovery-step", `Running ${recoveryLabel(action)}`, "warning", { action, confidence, evidence, recoveryCycleId: this.recoveryCycleId, failureKind: this.recoveryFailureKind, risk: actionRisk(action) });
-    const initiated = await this.performRecoveryAction(action, detail, confidence);
+    const precondition = validateRecoveryAction(action, this.recoveryContext());
+    if (!precondition.allowed) {
+      this.recoveryIndex += 1;
+      await this.log("recovery-step-skipped", `${recoveryLabel(action)} skipped: ${precondition.reason}`, "info", { action, recoveryCycleId: this.recoveryCycleId });
+      this.nextActionAt = Date.now() + 250;
+      return;
+    }
+    const result = await this.beginRecoveryAction(action, detail, confidence);
     this.recoveryIndex += 1;
-    if (initiated) { this.activeAction = { action, startedAt: Date.now() }; this.circuitState = "VERIFYING"; }
-    else await this.recordActionOutcome(action, false, 0);
-    if (action !== "PAGE_RELOAD" || !initiated) {
+    if (result.initiated) {
+      this.activeAction = { action, startedAt: Date.now(), authorization: result.authorization };
+      this.circuitState = "VERIFYING";
+    } else if (result.authorization) await this.recordActionOutcome(action, false, 0, result.authorization);
+    if (action !== "PAGE_RELOAD" || !result.initiated) {
       const backoff = this.settings.recoveryBackoffSeconds[Math.min(this.recoveryIndex - 1, this.settings.recoveryBackoffSeconds.length - 1)] ?? 15;
       this.nextActionAt = Date.now() + jitter(Math.max(backoff, this.settings.recoveryVerificationSeconds) * 1000);
-      if (!initiated) this.circuitState = "OPEN_COOLDOWN";
+      if (!result.initiated) this.circuitState = "OPEN_COOLDOWN";
     }
   }
 
-  private async performRecoveryAction(action: RecoveryAction, detail: string, confidence: number): Promise<boolean> {
+  private async beginRecoveryAction(action: RecoveryAction, detail: string, confidence: number): Promise<{
+    initiated: boolean; authorization?: RecoveryActionAuthorization;
+  }> {
+    if (!this.recoveryCycleId) return { initiated: false };
+    const automaticSetting = validateAutomaticRecoverySetting(action, this.settings);
+    if (!automaticSetting.allowed) return { initiated: false };
+    const response = await sendMessage<{
+      authorized: boolean; authorization?: RecoveryActionAuthorization; error?: string; primary?: boolean;
+    }>({
+      type: "AUTHORIZE_RECOVERY_ACTION", origin: this.origin, pageUrl: location.href,
+      recoveryCycleId: this.recoveryCycleId, action, reason: detail, confidence
+    } satisfies RuntimeMessage).catch((error) => ({ authorized: false, error: String(error), authorization: undefined }));
+    if (!response.authorized || !response.authorization) {
+      if (response.error && !/not the elected primary/i.test(response.error)) this.ui.toast(response.error, "warning", 6000);
+      return { initiated: false };
+    }
+    const authorization = response.authorization;
+    if (action === "PAGE_RELOAD") {
+      await this.savePreferences();
+      await this.captureSessionSnapshot();
+      return { initiated: true, authorization };
+    }
+    const commit = await sendMessage<{ allowed: boolean; executedByBackground?: boolean; error?: string }>({
+      type: "COMMIT_RECOVERY_ACTION", pageUrl: location.href, recoveryCycleId: authorization.cycleId,
+      actionId: authorization.actionId, authorizationNonce: authorization.authorizationNonce
+    } satisfies RuntimeMessage).catch((error) => ({ allowed: false, error: String(error), executedByBackground: false }));
+    if (!commit.allowed) return { initiated: false, authorization };
+    if (commit.executedByBackground) return { initiated: true, authorization };
+    // DOM/player state may have changed while background authorization was in
+    // flight, so capability and user-intent preconditions are checked again at
+    // the final mutation boundary.
+    const precondition = validateRecoveryAction(action, this.recoveryContext());
+    if (!precondition.allowed) return { initiated: false, authorization };
+    return { initiated: await this.performRecoveryAction(action), authorization };
+  }
+
+  private async performRecoveryAction(action: RecoveryAction): Promise<boolean> {
     switch (action) {
       case "WAIT":
         return true;
       case "USER_PROMPT":
-        this.ui.prompt("Click to resume stream", () => void this.primary?.play().catch(() => undefined));
+        this.ui.prompt("Click to resume stream", () => {
+          const video = this.primary;
+          if (video) void this.requestPlayback(video, true);
+        });
         return true;
       case "REDISCOVER": {
         const selection = this.candidates.select(null, this.settings, this.recentInteraction, this.frames.getVisibilityFactor());
@@ -550,8 +745,7 @@ class StreamMonitor {
         try {
           const playButton = this.safeConfiguredControl(this.settings.playButtonSelector);
           if (playButton) playButton.click();
-          await this.primary.play();
-          return true;
+          return await this.requestPlayback(this.primary);
         } catch { return false; }
       case "LIVE_EDGE": {
         if (!this.primary?.seekable.length) return false;
@@ -571,23 +765,11 @@ class StreamMonitor {
       case "MEDIA_RELOAD":
         if (!this.primary || this.userPaused) return false;
         await this.captureSessionSnapshot();
-        try { this.primary.load(); await this.primary.play(); return true; } catch { return false; }
+        try { this.primary.load(); return await this.requestPlayback(this.primary); } catch { return false; }
       case "IFRAME_RELOAD":
-        if (window.top === window) return false;
-        await sendMessage({ type: "REQUEST_IFRAME_RECOVERY", frameToken: this.frames.token } satisfies RuntimeMessage).catch(() => undefined);
-        return true;
+        return false; // committed and executed by the background coordinator
       case "PAGE_RELOAD":
-        if (this.refreshRequested) return true;
-        await this.captureSessionSnapshot();
-        this.refreshRequested = true;
-        const result = await sendMessage<{ ok: boolean; error?: string }>({
-          type: "REQUEST_AUTO_REFRESH", origin: this.origin, pageUrl: location.href, reason: detail, confidence
-        } satisfies RuntimeMessage).catch((error) => ({ ok: false, error: String(error) }));
-        if (!result.ok) {
-          this.refreshRequested = false;
-          if (result.error && !result.error.includes("disabled")) this.ui.toast(result.error, "warning", 8000);
-        }
-        return result.ok;
+        return false; // countdown and top-level reload are background-owned
       case "BACKUP_HANDOFF": {
         const backup = this.settings.backupUrls[0];
         if (!backup) return false;
@@ -597,26 +779,76 @@ class StreamMonitor {
     }
   }
 
+  private recoveryContext(): RecoveryContext {
+    const probe = this.mediaCapabilityProbe();
+    const playerType = inferPlayerType(probe);
+    const reloadDecision = decideMediaReload(playerType, probe);
+    return {
+      hasVideo: !!this.primary,
+      playerType,
+      hasRetryControl: !!this.safeConfiguredControl(this.settings.retryButtonSelector),
+      insideIframe: window.top !== window,
+      playIntent: policyPlaybackIntent(this.playbackIntent),
+      followingLive: this.liveIntent === "FOLLOWING_LIVE",
+      mediaReloadSafe: reloadDecision.safe,
+      online: navigator.onLine
+    };
+  }
+
   private setPrimary(video: HTMLVideoElement | null, score: number, label: string): void {
     const preserveRecoveryCycle = this.recoveryCycleId !== null;
     this.detachPrimary();
     this.primary = video;
     this.primaryScore = score;
     this.primaryLabel = label;
+    this.candidateEpoch += 1;
+    this.candidateId = video ? (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`) : "";
     this.resetPrimaryState();
     if (!preserveRecoveryCycle) this.resetRecovery();
     if (!video) return;
     const onError = () => { this.explicitError = "The video element emitted an error"; void this.check(); };
-    const onWaiting = () => { if (!video.paused) this.waitingEvents += 1; void this.check(); };
-    const onPlaying = () => { this.userPaused = false; this.explicitError = ""; this.lastAdvancedAt = Date.now(); void this.check(); };
-    const onPause = () => { if (Date.now() - this.lastUserInputAt < 1800) this.userPaused = true; void this.check(); };
+    const onWaiting = () => {
+      if (!video.paused) {
+        this.waitingEvents += 1;
+        this.sessionMetrics.buffering(Date.now());
+      }
+      void this.check();
+    };
+    const onPlay = () => {
+      if (Date.now() - this.lastUserInputAt < 2_500 && this.lastPlaybackCommand !== "PAUSE") {
+        this.setPlaybackIntent("USER_REQUESTED_PLAY");
+      }
+      void this.check();
+    };
+    const onPlaying = () => {
+      this.sessionMetrics.progress(Date.now());
+      this.setPlaybackIntent("PLAYING");
+      this.playbackControlError = "";
+      this.explicitError = "";
+      this.lastAdvancedAt = Date.now();
+      void this.check();
+    };
+    const onCanPlay = () => { this.explicitError = ""; void this.check(); };
+    const onPause = () => {
+      this.sessionMetrics.suspend(Date.now());
+      if (isNormalFiniteEnd(video)) this.setPlaybackIntent("ENDED_NORMALLY");
+      else if (Date.now() - this.lastUserInputAt < 2_500 && this.lastPlaybackCommand !== "PLAY") this.setPlaybackIntent("USER_PAUSED");
+      else if (this.playbackIntent !== "AUTOPLAY_BLOCKED" && this.playbackIntent !== "USER_REQUESTED_PLAY") this.setPlaybackIntent("SITE_PAUSED");
+      void this.check();
+    };
+    const onEnded = () => {
+      this.sessionMetrics.suspend(Date.now());
+      if (isNormalFiniteEnd(video)) this.setPlaybackIntent("ENDED_NORMALLY");
+      void this.check();
+    };
     const onSeeking = () => {
-      if (Date.now() - this.lastUserInputAt < 1800 && video.currentTime < this.lastCurrentTime - 2) this.recentBackwardSeekUntil = Date.now() + 120_000;
+      if (Date.now() - this.lastUserInputAt < 2_500 && video.currentTime < this.lastCurrentTime - 2) this.recentBackwardSeekUntil = Date.now() + 120_000;
     };
     const onPreference = () => this.schedulePreferenceSave();
-    for (const event of ["error", "waiting", "stalled", "playing", "canplay", "pause", "seeking", "volumechange", "ratechange"] as const) {
+    for (const event of ["error", "waiting", "stalled", "play", "playing", "canplay", "pause", "ended", "seeking", "volumechange", "ratechange"] as const) {
       const listener = event === "error" ? onError : event === "waiting" || event === "stalled" ? onWaiting
-        : event === "playing" || event === "canplay" ? onPlaying : event === "pause" ? onPause : event === "seeking" ? onSeeking : onPreference;
+        : event === "play" ? onPlay : event === "playing" ? onPlaying : event === "canplay" ? onCanPlay
+          : event === "pause" ? onPause : event === "ended" ? onEnded : event === "seeking" ? onSeeking : onPreference;
       video.addEventListener(event, listener);
       this.videoCleanups.push(() => video.removeEventListener(event, listener));
     }
@@ -624,6 +856,31 @@ class StreamMonitor {
     if (this.settings.restorePlayerPreferences && this.savedPreferences) this.applyPreferences(video, this.savedPreferences);
     if (this.sessionSnapshot && this.sessionSnapshot.expiresAt > Date.now()) void this.restoreSessionSnapshot(video, this.sessionSnapshot);
     void this.log("player-selected", `${describeVideo(video, !!this.settings.selectedVideoSelector)} selected`, "info", { score });
+  }
+
+  private setPlaybackIntent(intent: PlaybackIntent, now = Date.now()): void {
+    if (this.playbackIntent === intent) return;
+    this.playbackIntent = intent;
+    this.playbackIntentChangedAt = now;
+  }
+
+  private async requestPlayback(video: HTMLVideoElement, viewerRequested = false): Promise<boolean> {
+    if (viewerRequested) this.setPlaybackIntent("USER_REQUESTED_PLAY");
+    try {
+      await video.play();
+      return true;
+    } catch (error) {
+      if (this.primary !== video) return false;
+      const failure = classifyPlaybackControlFailure(error);
+      if (failure.kind === "AUTOPLAY_BLOCKED") {
+        this.playbackControlError = failure.detail;
+        this.setPlaybackIntent("AUTOPLAY_BLOCKED");
+      } else if (failure.kind === "PLAYER_CONTROL_ERROR") {
+        this.playbackControlError = failure.detail;
+      }
+      if (failure.kind !== "IGNORED") void this.check();
+      return false;
+    }
   }
 
   private detachPrimary(): void {
@@ -654,7 +911,11 @@ class StreamMonitor {
     this.lastTotalFrames = this.lastDroppedFrames = 0;
     this.waitingEvents = 0;
     this.explicitError = "";
-    this.userPaused = false;
+    this.playbackControlError = "";
+    this.lastPlaybackCommand = null;
+    this.playbackIntent = this.primary && !this.primary.paused ? "PLAYING"
+      : this.primary && isNormalFiniteEnd(this.primary) ? "ENDED_NORMALLY" : "NEVER_PLAYED";
+    this.playbackIntentChangedAt = Date.now();
     this.healthySince = null;
     this.successReported = false;
     this.consecutiveFailures = 0;
@@ -670,7 +931,6 @@ class StreamMonitor {
     this.recoveryFailureKind = "NONE";
     this.circuitState = "CLOSED";
     this.activeAction = null;
-    this.recoveryStartedAt = null;
     if (clearRefresh) this.refreshRequested = false;
   }
 
@@ -781,11 +1041,25 @@ class StreamMonitor {
     return { state: "suspected", detail: diagnosis.detail, confidence: diagnosis.confidence, evidence: diagnosis.evidence };
   }
 
-  private async recordActionOutcome(action: RecoveryAction, success: boolean, durationMs: number): Promise<void> {
-    await sendMessage({
+  private async recordActionOutcome(action: RecoveryAction, success: boolean, durationMs: number,
+    authorization = this.activeAction?.authorization): Promise<{ terminal: boolean; success: boolean | null }> {
+    if (authorization) {
+      const result = await sendMessage<{
+        recorded?: boolean; duplicate?: boolean; action?: { success?: boolean | null };
+      }>({
+        type: "COMPLETE_RECOVERY_ACTION", origin: this.origin, pageUrl: location.href,
+        recoveryCycleId: authorization.cycleId, actionId: authorization.actionId,
+        authorizationNonce: authorization.authorizationNonce, success,
+        durationMs: Math.max(0, durationMs), failureKind: this.recoveryFailureKind
+      } satisfies RuntimeMessage).catch(() => null);
+      if (!result || (!result.recorded && !result.duplicate)) return { terminal: false, success: null };
+      return { terminal: true, success: result.action?.success ?? (result.recorded ? success : null) };
+    }
+    const result = await sendMessage({
       type: "RECORD_ACTION_OUTCOME", origin: this.origin,
       outcome: { action, failureKind: this.recoveryFailureKind, success, durationMs: Math.max(0, durationMs), timestamp: Date.now() }
-    } satisfies RuntimeMessage).catch(() => undefined);
+    } satisfies RuntimeMessage).then(() => true, () => false);
+    return { terminal: result, success: result ? success : null };
   }
 
   private async report(
@@ -808,6 +1082,8 @@ class StreamMonitor {
       liveEdgeLagSeconds: this.currentLiveLag, bufferAheadSeconds: this.currentBufferAhead,
       recoveryCycleId: this.recoveryCycleId, circuitState: this.circuitState, compatibility: this.compatibilityReport(), recoveryAction: this.currentRecoveryAction,
       nextActionAt: this.nextActionAt, online: navigator.onLine, frameToken: this.frames.token
+      , pageVisible: document.visibilityState === "visible", navigationId: this.navigationId,
+      candidateId: this.candidateId, candidateEpoch: this.candidateEpoch
     };
     await sendMessage({ type: "REPORT_STATUS", status } satisfies RuntimeMessage).catch(() => undefined);
   }
@@ -830,32 +1106,92 @@ class StreamMonitor {
     this.timerId = window.setTimeout(() => void this.check(), seconds * 1000);
   }
 
-  private startCountdown(seconds: number, reason: string): void {
-    this.ui.showCountdown(seconds, reason, {
-      cancel: () => {
+  private startCountdown(message: Extract<RuntimeMessage, { type: "START_COUNTDOWN" }>): boolean {
+    this.countdownIdentity = {
+      recoveryCycleId: message.recoveryCycleId,
+      actionId: message.actionId,
+      authorizationNonce: message.authorizationNonce
+    };
+    const visible = this.ui.showCountdown(message.deadline, message.reason, {
+      cancel: async () => {
+        const result = await sendMessage<{ ok: boolean; canceled?: boolean; error?: string }>({
+          type: "CANCEL_AUTO_REFRESH", recoveryCycleId: message.recoveryCycleId,
+          actionId: message.actionId, authorizationNonce: message.authorizationNonce
+        } satisfies RuntimeMessage).catch((): { ok: boolean; canceled?: boolean; error?: string } =>
+          ({ ok: false, error: "The recovery coordinator could not be reached." }));
+        if (!result.ok || !result.canceled) {
+          this.ui.toast(result.error || "The reload could not be canceled because it is no longer pending.", "warning", 0);
+          return;
+        }
         this.requestSuppressedUntil = Date.now() + this.settings.stallTimeoutSeconds * 1000;
         this.refreshRequested = false;
         this.ui.hideCountdown();
-        void sendMessage({ type: "CANCEL_AUTO_REFRESH" } satisfies RuntimeMessage).catch(() => undefined);
-        void this.log("countdown-canceled", "User canceled the pending page reload", "info");
+        if (this.matchesCountdown(message)) this.countdownIdentity = null;
+        await this.log("countdown-canceled", "User canceled the pending page reload", "info");
       },
-      extend: (amount) => void this.log("countdown-extended", `Countdown extended by ${amount} seconds`, "info"),
-      expire: () => void this.performRefresh()
+      extend: async (amount) => {
+        if (!this.matchesCountdown(message)) return;
+        // Hold expiry while the coordinator atomically extends its alarm. The
+        // button is disabled by UiLayer, preventing concurrent viewer clicks.
+        this.ui.setCountdownHeld(true);
+        try {
+          const result = await sendMessage<{ ok: boolean; deadline?: number; error?: string }>({
+            type: "EXTEND_AUTO_REFRESH", recoveryCycleId: message.recoveryCycleId,
+            actionId: message.actionId, authorizationNonce: message.authorizationNonce, seconds: amount
+          } satisfies RuntimeMessage).catch((): { ok: boolean; deadline?: number; error?: string } =>
+            ({ ok: false, error: "The recovery coordinator could not be reached." }));
+          if (!result.ok || !Number.isFinite(result.deadline)) {
+            this.ui.toast(result.error || "The reload countdown could not be extended.", "warning", 0);
+            return;
+          }
+          if (!this.matchesCountdown(message)) return;
+          const deadline = Math.max(message.deadline, result.deadline!);
+          message.deadline = deadline;
+          this.ui.setCountdownDeadline(deadline);
+          if (this.activeAction?.authorization?.actionId === message.actionId && this.activeAction.authorization.countdownDeadline) {
+            this.activeAction.authorization.countdownDeadline = Math.max(
+              this.activeAction.authorization.countdownDeadline, deadline
+            );
+            this.activeAction.authorization.expiresAt = Math.max(this.activeAction.authorization.expiresAt, deadline + 60_000);
+          }
+          await this.log("countdown-extended", `Countdown extended by ${amount} seconds`, "info");
+        } finally {
+          if (this.matchesCountdown(message)) this.ui.setCountdownHeld(false);
+        }
+      },
+      expire: () => {
+        if (this.matchesCountdown(message)) this.countdownIdentity = null;
+        void this.performRefresh(message);
+      }
     });
-    void this.report("COUNTDOWN", `Refresh scheduled: ${reason}`, 100, [], true);
+    void this.report("COUNTDOWN", `Refresh scheduled: ${message.reason}`, 100, [], true);
+    if (!visible && this.matchesCountdown(message)) this.countdownIdentity = null;
+    return visible;
   }
 
-  private async performRefresh(): Promise<void> {
-    const result = await sendMessage<{ allowed: boolean }>({ type: "RECORD_AUTO_REFRESH", origin: this.origin, pageUrl: location.href } satisfies RuntimeMessage)
-      .catch(() => ({ allowed: false }));
+  private matchesCountdown(
+    message: Pick<Extract<RuntimeMessage, { type: "START_COUNTDOWN" }>, "recoveryCycleId" | "actionId" | "authorizationNonce">
+  ): boolean {
+    return this.countdownIdentity?.recoveryCycleId === message.recoveryCycleId &&
+      this.countdownIdentity.actionId === message.actionId &&
+      this.countdownIdentity.authorizationNonce === message.authorizationNonce;
+  }
+
+  private async performRefresh(message: Extract<RuntimeMessage, { type: "START_COUNTDOWN" }>): Promise<void> {
+    const result = await sendMessage<{ allowed: boolean; reloadInitiated?: boolean; error?: string }>({
+      type: "COMMIT_RECOVERY_ACTION", pageUrl: location.href, recoveryCycleId: message.recoveryCycleId,
+      actionId: message.actionId, authorizationNonce: message.authorizationNonce
+    } satisfies RuntimeMessage)
+      .catch(() => ({ allowed: false, error: "The recovery coordinator could not be reached." }));
     if (result.allowed) {
-      await this.savePreferences();
-      await this.captureSessionSnapshot();
       await this.report("REFRESHING", "Reloading the top-level page", 100, [], true);
-      window.location.reload();
+      // The background reloads the tab so an embedded player never reloads
+      // only its own frame. If the browser reports an execution failure the
+      // transaction remains visible instead of falling back to a frame reload.
     } else {
-      this.ui.toast("Automatic refresh paused because the refresh limit was reached.", "warning", 0);
-      await this.report("PAUSED_TOO_MANY_REFRESHES", "Refresh loop protection is active", 100, [], true);
+      this.ui.toast(result.error ?? "Automatic refresh was canceled after its safety checks changed.", "warning", 0);
+      this.refreshRequested = false;
+      await this.report("SUSPECTED_DOWN", result.error ?? "Scheduled refresh was canceled by safety revalidation", 100, [], true);
     }
   }
 
@@ -866,11 +1202,14 @@ class StreamMonitor {
     const video = selection.video;
     try { await video.requestFullscreen(); return; } catch { /* expected without a user gesture */ }
     if (this.settings.attemptNativeFullscreenClick) {
-      const button = this.findFullscreenButton();
-      if (button) {
-        button.click();
+      const discovery = this.findFullscreenButton(video);
+      if (discovery.kind === "found") {
+        discovery.button.click();
         await delay(350);
         if (document.fullscreenElement) return;
+      } else if (discovery.kind === "ambiguous") {
+        this.promptForSafeFullscreen(video, "Multiple fullscreen controls were found — click to maximize safely");
+        return;
       }
     }
     if (window.top !== window) await sendMessage({ type: "REQUEST_PARENT_MAXIMIZE" } satisfies RuntimeMessage).catch(() => undefined);
@@ -915,19 +1254,21 @@ class StreamMonitor {
     return video.parentElement ?? video;
   }
 
-  private findFullscreenButton(): HTMLElement | null {
+  private findFullscreenButton(video: HTMLVideoElement): FullscreenControlDiscovery<HTMLElement> {
     const configured = this.safeConfiguredControl(this.settings.fullscreenButtonSelector);
-    if (configured) return configured;
-    return [...document.querySelectorAll<HTMLElement>("button,[role='button'],input[type='button']")].find((element) => {
-      if (!isVisible(element)) return false;
-      // Generic automatic clicks require a clear accessible label. IDs, classes,
-      // and visible copy are intentionally excluded because they are too easy to
-      // misclassify on arbitrary sites. A configured selector remains authoritative.
-      const label = [element.getAttribute("aria-label"), element.getAttribute("title"), element.getAttribute("data-tooltip")]
-        .filter((value) => typeof value === "string").join(" ").toLowerCase();
-      return /full[ -]?screen|enter[ -]?full|maximize/.test(label) && !/exit/.test(label) &&
-        !element.closest("[role='dialog'][aria-modal='true'],dialog[open],form[action*='login' i],[class*='paywall' i],[class*='captcha' i]");
-    }) ?? null;
+    if (configured) return { kind: "found", button: configured, matchCount: 1 };
+    return discoverGenericFullscreenControl(this.findVideoContainer(video));
+  }
+
+  private promptForSafeFullscreen(video: HTMLVideoElement, label: string): void {
+    this.ui.prompt(label, () => {
+      void video.requestFullscreen().catch(() => {
+        if (this.settings.useCssMaximizeFallback) {
+          this.applyCssMaximize(this.findVideoContainer(video));
+          this.ui.toast("Browser fullscreen was blocked; using page maximize instead.", "info");
+        } else this.ui.toast("Fullscreen is not available for this player.", "warning");
+      });
+    });
   }
 
   private applyCssMaximize(element: HTMLElement): void {
@@ -993,11 +1334,16 @@ class StreamMonitor {
   };
 
   private readonly onUserInput = (event: Event): void => {
-    const target = event.target instanceof Element ? event.target.closest("video") as HTMLVideoElement | null : null;
-    if (target) {
-      this.lastUserInputAt = Date.now();
-      this.recentInteraction.set(target, this.lastUserInputAt);
-    }
+    if (!event.isTrusted || !this.primary || this.ui.containsEvent(event)) return;
+    const target = event.composedPath().find((item): item is Element => item instanceof Element) ?? null;
+    const container = this.findVideoContainer(this.primary);
+    const insideSelectedPlayer = !!target && (target === this.primary || this.primary.contains(target) || container.contains(target));
+    const command = playbackCommandForEvent(event, insideSelectedPlayer, target);
+    if (!command) return;
+    this.lastUserInputAt = Date.now();
+    this.lastPlaybackCommand = command;
+    this.recentInteraction.set(this.primary, this.lastUserInputAt);
+    if (command === "PLAY") this.setPlaybackIntent("USER_REQUESTED_PLAY", this.lastUserInputAt);
   };
 
   private readonly onNetworkChange = (): void => {
@@ -1045,7 +1391,7 @@ class StreamMonitor {
   }
 
   private async captureSessionSnapshot(): Promise<void> {
-    if (!this.primary || !this.recoveryCycleId) return;
+    if (!this.settings.restorePlayerPreferences || !this.primary || !this.recoveryCycleId) return;
     const preferences: PlayerPreferences = {
       volume: this.primary.volume, muted: this.primary.muted, playbackRate: this.primary.playbackRate,
       captionsShowing: [...this.primary.textTracks].some((track) => track.mode === "showing"), cssMaximized: !!this.cssMaximized,
@@ -1057,13 +1403,14 @@ class StreamMonitor {
       wasPlaying: !this.primary.paused && !this.userPaused,
       mediaPosition: this.streamKind === "VOD" ? finite(this.primary.currentTime) : null,
       scrollX, scrollY, createdAt: Date.now(), expiresAt: Date.now() + 30 * 60_000, recoveryCycleId: this.recoveryCycleId
+      , navigationId: this.navigationId
     };
     this.sessionSnapshot = snapshot;
     await sendMessage({ type: "SAVE_SESSION_SNAPSHOT", snapshot } satisfies RuntimeMessage).catch(() => undefined);
   }
 
-  private async restoreSessionSnapshot(video: HTMLVideoElement, snapshot: PlayerSessionSnapshot): Promise<void> {
-    if (snapshot.expiresAt <= Date.now()) return;
+  private async restoreSessionSnapshot(video: HTMLVideoElement, snapshot: PlayerSessionSnapshot): Promise<boolean> {
+    if (!this.settings.restorePlayerPreferences || snapshot.expiresAt <= Date.now()) return false;
     this.applyPreferences(video, snapshot);
     await delay(200);
     try {
@@ -1072,31 +1419,48 @@ class StreamMonitor {
       } else if (snapshot.followingLive && video.seekable.length) {
         video.currentTime = Math.max(0, video.seekable.end(video.seekable.length - 1) - 1);
       }
-      if (snapshot.wasPlaying && !this.userPaused) await video.play();
+      if (snapshot.wasPlaying && !this.userPaused) await this.requestPlayback(video);
       if (!snapshot.cssMaximized) window.scrollTo(snapshot.scrollX, snapshot.scrollY);
       if (snapshot.pictureInPicture) this.ui.prompt("Restore Picture-in-Picture", () => void (video as any).requestPictureInPicture?.());
       this.sessionSnapshot = undefined;
-      await sendMessage({ type: "CLEAR_SESSION_SNAPSHOT", origin: this.origin } satisfies RuntimeMessage).catch(() => undefined);
+      await sendMessage({
+        type: "CLEAR_SESSION_SNAPSHOT", origin: this.origin, recoveryCycleId: snapshot.recoveryCycleId
+      } satisfies RuntimeMessage).catch(() => undefined);
       await this.log("session-restored", "Player preferences and viewing state were restored", "success", { recoveryCycleId: snapshot.recoveryCycleId });
-    } catch { /* a later healthy check or user gesture can complete restoration */ }
+      return true;
+    } catch { return false; /* a later healthy check or user gesture can complete restoration */ }
   }
 
   private compatibilityReport(): CompatibilityReport {
     const video = this.primary;
+    const probe = this.mediaCapabilityProbe();
+    const playerType = inferPlayerType(probe);
+    const reloadDecision = decideMediaReload(playerType, probe);
     const limitations: string[] = [];
     if (!video) limitations.push("No accessible HTML video is selected");
     if (!video || typeof (video as any).requestVideoFrameCallback !== "function") limitations.push("Presented-frame callbacks unavailable");
     if (!video || typeof video.getVideoPlaybackQuality !== "function") limitations.push("Playback-quality metrics unavailable");
     if (window.top !== window) limitations.push("Player is inside an embedded frame");
     if (!("wakeLock" in navigator)) limitations.push("Screen wake lock unavailable");
+    if (!reloadDecision.safe) limitations.push(reloadDecision.reason);
     return {
       htmlVideo: !!video, crossFrame: window.top !== window, frameCallbacks: !!video && typeof (video as any).requestVideoFrameCallback === "function",
       playbackQuality: !!video && typeof video.getVideoPlaybackQuality === "function", liveEdge: !!video?.seekable.length,
       pictureInPicture: !!video && "requestPictureInPicture" in video, fullscreen: !!video?.requestFullscreen,
       wakeLock: "wakeLock" in navigator, protocolBridge: !!this.protocolObservation, visualWatchdog: this.settings.enableVisualWatchdog,
-      playerType: this.protocolObservation?.kind ?? (this.settings.declaredPlayerType === "AUTO"
-        ? this.visualTarget?.tagName === "CANVAS" ? "CANVAS" : "HTML5" : this.settings.declaredPlayerType),
+      playerType,
       level: video ? limitations.length <= 1 ? "FULL" : "PARTIAL" : this.visualTarget ? "PARTIAL" : "RESTRICTED", limitations
+    };
+  }
+
+  private mediaCapabilityProbe(): MediaCapabilityProbe {
+    return {
+      declaredPlayerType: this.settings.declaredPlayerType,
+      protocolKind: this.protocolObservation?.kind ?? null,
+      hasVideo: !!this.primary,
+      hasCanvasTarget: this.visualTarget?.tagName === "CANVAS",
+      hasSrcObject: !!this.primary?.srcObject,
+      currentSource: this.primary?.currentSrc || this.primary?.src || ""
     };
   }
 
@@ -1114,15 +1478,25 @@ class StreamMonitor {
   }
 
   private async sampleVisualProgress(target: HTMLElement | null = this.primary): Promise<boolean | null> {
-    if (!target || document.hidden || Date.now() - this.lastVisualSampleAt < this.settings.visualSampleIntervalSeconds * 1000) return null;
+    // Nested-frame coordinates cannot be trusted until every frame transform is
+    // independently verified in the privileged context. Fail closed instead of
+    // risking a crop from unrelated visible page content.
+    if (!target || window.top !== window || document.hidden ||
+      Date.now() - this.lastVisualSampleAt < this.settings.visualSampleIntervalSeconds * 1000) return null;
     this.lastVisualSampleAt = Date.now();
     const rect = target.getBoundingClientRect();
-    const response = await sendMessage<{ ok: boolean; dataUrl?: string }>({
-      type: "REQUEST_VISUAL_SAMPLE", rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-    } satisfies RuntimeMessage).catch((): { ok: boolean; dataUrl?: string } => ({ ok: false }));
-    if (!response.ok || !response.dataUrl) return null;
-    const hash = await visualHash(response.dataUrl, rect).catch(() => "");
-    if (!hash) return null;
+    const response = await sendMessage<{ ok: boolean; hash?: string }>({
+      type: "REQUEST_VISUAL_SAMPLE",
+      origin: this.origin,
+      pageUrl: location.href,
+      navigationId: this.navigationId,
+      candidateId: this.candidateId,
+      candidateEpoch: this.candidateEpoch,
+      rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      viewport: { width: innerWidth, height: innerHeight }
+    } satisfies RuntimeMessage).catch((): { ok: boolean; hash?: string } => ({ ok: false }));
+    const hash = response.hash;
+    if (!response.ok || !hash || !/^[0-9a-f]{16}$/.test(hash)) return null;
     const advanced = !!this.lastVisualHash && this.lastVisualHash !== hash;
     if (!advanced && this.lastVisualHash) this.repeatedVisualSamples += 1; else this.repeatedVisualSamples = 0;
     this.lastVisualHash = hash;
@@ -1172,6 +1546,7 @@ class StreamMonitor {
     this.candidates.destroy();
     this.frames.destroy();
     this.stopPicker();
+    this.countdownIdentity = null;
     this.ui.destroy();
     document.removeEventListener("pointerdown", this.onUserInput, true);
     document.removeEventListener("keydown", this.onUserInput, true);
@@ -1187,21 +1562,32 @@ function finite(value: number): number { return Number.isFinite(value) ? value :
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => window.setTimeout(resolve, milliseconds)); }
 function safeText(value: unknown, limit: number): string | undefined { return typeof value === "string" ? value.slice(0, limit) : undefined; }
 function safeNumber(value: unknown): number | undefined { const number = Number(value); return Number.isFinite(number) ? number : undefined; }
-async function visualHash(dataUrl: string, rect: DOMRect): Promise<string> {
-  const image = new Image(); image.src = dataUrl; await image.decode();
-  const scaleX = image.naturalWidth / Math.max(1, innerWidth); const scaleY = image.naturalHeight / Math.max(1, innerHeight);
-  const canvas = document.createElement("canvas"); canvas.width = 8; canvas.height = 8;
-  const context = canvas.getContext("2d", { willReadFrequently: true }); if (!context) return "";
-  context.drawImage(image, Math.max(0, rect.x * scaleX), Math.max(0, rect.y * scaleY), Math.max(1, rect.width * scaleX), Math.max(1, rect.height * scaleY), 0, 0, 8, 8);
-  const pixels = context.getImageData(0, 0, 8, 8).data; const values: number[] = [];
-  for (let index = 0; index < pixels.length; index += 4) values.push(Math.round((pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3));
-  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  return values.map((value) => value >= average ? "1" : "0").join("");
-}
 function jitter(milliseconds: number): number { return Math.round(milliseconds * (0.9 + Math.random() * 0.2)); }
 function liveEdgeLag(video: HTMLVideoElement): number | null {
   if (!video.seekable.length) return null;
   try { return Math.max(0, video.seekable.end(video.seekable.length - 1) - video.currentTime); } catch { return null; }
+}
+function isNormalFiniteEnd(video: HTMLVideoElement): boolean {
+  return video.ended && Number.isFinite(video.duration) && video.duration > 0;
+}
+function playbackCommandForEvent(
+  event: Event,
+  insideSelectedPlayer: boolean,
+  target: Element | null
+): "PLAY" | "PAUSE" | "TOGGLE" | null {
+  if (event instanceof PointerEvent) return insideSelectedPlayer ? "TOGGLE" : null;
+  if (!(event instanceof KeyboardEvent)) return null;
+  const key = event.key || event.code;
+  if (key === "MediaPlay") return "PLAY";
+  if (key === "MediaPause" || key === "MediaStop") return "PAUSE";
+  if (key === "MediaPlayPause") return "TOGGLE";
+  if (!insideSelectedPlayer || target?.closest("input,textarea,select,[contenteditable='true'],[contenteditable='']")) return null;
+  return [" ", "Space", "Spacebar", "Enter", "k", "K"].includes(key) ? "TOGGLE" : null;
+}
+function policyPlaybackIntent(intent: PlaybackIntent): NonNullable<RecoveryContext["playIntent"]> {
+  if (intent === "USER_REQUESTED_PLAY") return "USER_REQUESTED";
+  if (intent === "NEVER_PLAYED" || intent === "ENDED_NORMALLY") return "UNKNOWN";
+  return intent;
 }
 function isVisible(element: Element): boolean {
   const rect = element.getBoundingClientRect();

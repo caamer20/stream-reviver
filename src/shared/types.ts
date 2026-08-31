@@ -1,4 +1,4 @@
-export const SETTINGS_SCHEMA_VERSION = 3;
+export const SETTINGS_SCHEMA_VERSION = 4;
 
 export type FailureKind =
   | "NONE"
@@ -24,6 +24,19 @@ export type FailureKind =
 
 export type StreamKind = "CONFIRMED_LIVE" | "LIKELY_LIVE" | "DVR_LIVE" | "VOD" | "UNKNOWN";
 export type LiveIntent = "FOLLOWING_LIVE" | "INTENTIONALLY_BEHIND_LIVE" | "UNKNOWN_LIVE_POSITION";
+/**
+ * The strongest playback intent the monitor can establish without guessing.
+ * Ambiguous page-driven pauses remain SITE_PAUSED and are never treated as a
+ * request to resume automatically.
+ */
+export type PlaybackIntent =
+  | "NEVER_PLAYED"
+  | "USER_REQUESTED_PLAY"
+  | "PLAYING"
+  | "USER_PAUSED"
+  | "AUTOPLAY_BLOCKED"
+  | "SITE_PAUSED"
+  | "ENDED_NORMALLY";
 export type PlayerType = "AUTO" | "HTML5" | "MSE" | "HLS_JS" | "DASH_JS" | "WEBRTC" | "CANVAS";
 export type CircuitState = "CLOSED" | "VERIFYING" | "HALF_OPEN" | "OPEN_COOLDOWN" | "OPEN_REQUIRES_USER";
 export type DataClearTarget = "history" | "models" | "preferences" | "profiles" | "runtime" | "all";
@@ -71,6 +84,9 @@ export type SelectorField =
 
 export interface GlobalSettings {
   enabled: boolean;
+  /** Master switch for all automatic recovery actions. */
+  autoRecover: boolean;
+  /** Additional opt-in for the disruptive PAGE_RELOAD recovery action. */
   autoRefresh: boolean;
   autoMaximize: boolean;
   checkIntervalSeconds: number;
@@ -152,6 +168,11 @@ export interface EffectiveSettings extends GlobalSettings {
   excludeUrlPatterns: string[];
 }
 
+/**
+ * Diagnostic hint emitted from the page's MAIN JavaScript world. Every field
+ * is attacker-controlled from the extension's perspective and must never
+ * independently authorize a recovery action.
+ */
 export interface ProtocolObservation {
   kind: "MSE" | "HLS_JS" | "DASH_JS" | "WEBRTC";
   observedAt: number;
@@ -221,8 +242,36 @@ export interface FrameStatus {
   recoveryAction: RecoveryAction | null;
   nextActionAt: number | null;
   online: boolean;
+  pageVisible: boolean;
   frameToken: string;
+  navigationId: string;
+  candidateId: string;
+  candidateEpoch: number;
   updatedAt: number;
+}
+
+export interface RecoveryActionAuthorization {
+  tabId: number;
+  frameId: number;
+  navigationId: string;
+  candidateId: string;
+  candidateEpoch: number;
+  cycleId: string;
+  actionId: string;
+  authorizationNonce: string;
+  action: RecoveryAction;
+  authorizedAt: number;
+  expiresAt: number;
+  countdownDeadline: number | null;
+}
+
+export interface RecoveryResumeContext {
+  cycleId: string;
+  failureKind: FailureKind;
+  action: RecoveryAction;
+  actionId: string;
+  authorizationNonce: string;
+  startedAt: number;
 }
 
 export interface PlayerPreferences {
@@ -248,6 +297,7 @@ export interface PlayerSessionSnapshot extends PlayerPreferences {
   createdAt: number;
   expiresAt: number;
   recoveryCycleId: string;
+  navigationId: string;
 }
 
 export interface ActionOutcome {
@@ -256,6 +306,17 @@ export interface ActionOutcome {
   success: boolean;
   durationMs: number;
   timestamp: number;
+}
+
+export interface ActionOutcomeSummary {
+  successes: number;
+  failures: number;
+  averageDurationMs: number;
+}
+
+export interface FailureFeedbackSummary {
+  correct: number;
+  falseAlarms: number;
 }
 
 export interface HealthSample {
@@ -274,7 +335,12 @@ export interface LocalSiteModel {
   liveLagAverageSeconds: number;
   falseAlarms: number;
   correctRecoveries: number;
-  actionOutcomes: Partial<Record<RecoveryAction, { successes: number; failures: number; averageDurationMs: number }>>;
+  /** Aggregate kept for backwards-compatible display and coarse diagnostics. */
+  actionOutcomes: Partial<Record<RecoveryAction, ActionOutcomeSummary>>;
+  /** The adaptive policy reads this diagnosis-scoped model so success on one
+   * failure class cannot reorder actions for an unrelated class. */
+  actionOutcomesByFailure: Partial<Record<FailureKind, Partial<Record<RecoveryAction, ActionOutcomeSummary>>>>;
+  feedbackByFailure: Partial<Record<FailureKind, FailureFeedbackSummary>>;
   updatedAt: number;
 }
 
@@ -331,9 +397,48 @@ export interface PopupState {
   siteModel: LocalSiteModel | null;
 }
 
+export interface DashboardConfiguredSite {
+  origin: string;
+  host: string;
+  enabled: boolean;
+  permissionGranted: boolean;
+  activeTabs: number;
+}
+
+export interface DashboardActiveMonitor {
+  tabId: number;
+  origin: string;
+  host: string;
+  state: MonitorState;
+  detail: string;
+  confidence: number;
+  recoveryAction: RecoveryAction | null;
+  updatedAt: number;
+}
+
+export interface DashboardRecoveryEvent {
+  id: string;
+  origin: string;
+  host: string;
+  action: RecoveryAction;
+  outcome: "scheduled" | "success" | "failed" | "cancelled" | "paused";
+  timestamp: number;
+}
+
+export interface DashboardState {
+  acknowledged: boolean;
+  enabled: boolean;
+  generatedAt: number;
+  configuredSites: DashboardConfiguredSite[];
+  activeMonitors: DashboardActiveMonitor[];
+  recentRecoveries: DashboardRecoveryEvent[];
+}
+
 export type RuntimeMessage =
-  | { type: "GET_CONTEXT"; origin: string; pageUrl: string }
+  | { type: "GET_CONTEXT"; origin: string; pageUrl: string; navigationId: string }
   | { type: "GET_POPUP_STATE"; tabId?: number; origin?: string }
+  | { type: "GET_DASHBOARD_STATE" }
+  | { type: "FOCUS_DASHBOARD_TAB"; tabId: number }
   | { type: "GET_HISTORY"; tabId?: number; limit?: number }
   | { type: "GET_SITE_MODEL"; origin: string }
   | { type: "GET_PROFILES" }
@@ -353,14 +458,18 @@ export type RuntimeMessage =
   | { type: "LOG_HISTORY"; entry: Omit<HistoryEvent, "id" | "timestamp" | "tabId" | "frameId"> }
   | { type: "REQUEST_AUTO_REFRESH"; origin: string; pageUrl: string; reason: string; confidence: number }
   | { type: "RECORD_AUTO_REFRESH"; origin: string; pageUrl: string }
-  | { type: "CANCEL_AUTO_REFRESH" }
-  | { type: "PLAYBACK_SUCCESS"; pageUrl: string }
+  | { type: "AUTHORIZE_RECOVERY_ACTION"; origin: string; pageUrl: string; recoveryCycleId: string; action: RecoveryAction; reason: string; confidence: number }
+  | { type: "COMMIT_RECOVERY_ACTION"; pageUrl: string; recoveryCycleId: string; actionId: string; authorizationNonce: string }
+  | { type: "COMPLETE_RECOVERY_ACTION"; origin: string; pageUrl: string; recoveryCycleId: string; actionId: string; authorizationNonce: string; success: boolean; durationMs: number; failureKind: FailureKind; reason?: string }
+  | { type: "EXTEND_AUTO_REFRESH"; recoveryCycleId: string; actionId: string; authorizationNonce: string; seconds: number }
+  | { type: "CANCEL_AUTO_REFRESH"; recoveryCycleId?: string; actionId?: string; authorizationNonce?: string }
+  | { type: "PLAYBACK_SUCCESS"; pageUrl: string; recoveryCycleId?: string }
   | { type: "RECORD_ACTION_OUTCOME"; origin: string; outcome: ActionOutcome }
   | { type: "RECORD_HEALTH_SAMPLE"; origin: string; sample: HealthSample }
   | { type: "RECORD_USER_FEEDBACK"; origin: string; correct: boolean; failureKind: FailureKind }
   | { type: "SAVE_SESSION_SNAPSHOT"; snapshot: PlayerSessionSnapshot }
-  | { type: "CLEAR_SESSION_SNAPSHOT"; origin: string }
-  | { type: "CLAIM_AUTO_MAXIMIZE"; pageUrl: string }
+  | { type: "CLEAR_SESSION_SNAPSHOT"; origin: string; recoveryCycleId?: string }
+  | { type: "CLAIM_AUTO_MAXIMIZE"; pageUrl: string; recoveryCycleId: string }
   | { type: "SAVE_PLAYER_PREFERENCES"; origin: string; preferences: PlayerPreferences }
   | { type: "REQUEST_PARENT_MAXIMIZE" }
   | { type: "REQUEST_IFRAME_RECOVERY"; frameToken: string }
@@ -374,14 +483,25 @@ export type RuntimeMessage =
   | { type: "SNOOZE_TAB"; tabId: number; until: number | null }
   | { type: "SET_EVENT_MODE"; tabId: number; until: number | null }
   | { type: "RESET_TAB_ATTEMPTS"; tabId: number }
-  | { type: "REQUEST_VISUAL_SAMPLE"; rect: { x: number; y: number; width: number; height: number } }
+  | {
+      type: "REQUEST_VISUAL_SAMPLE";
+      origin: string;
+      pageUrl: string;
+      navigationId: string;
+      candidateId: string;
+      candidateEpoch: number;
+      rect: { x: number; y: number; width: number; height: number };
+      viewport: { width: number; height: number };
+    }
   | { type: "EXTEND_COUNTDOWN"; tabId: number; seconds: number }
   | { type: "CANCEL_TAB_COUNTDOWN"; tabId: number }
   | { type: "SHUTDOWN_MONITOR" }
+  | { type: "RESET_RUNTIME_STATE" }
   | { type: "SETTINGS_CHANGED"; settings: EffectiveSettings }
-  | { type: "START_COUNTDOWN"; seconds: number; reason: string }
-  | { type: "EXTEND_COUNTDOWN_IN_PAGE"; seconds: number }
-  | { type: "STOP_COUNTDOWN"; reason?: string }
+  | { type: "START_COUNTDOWN"; reason: string; deadline: number; recoveryCycleId: string; actionId: string; authorizationNonce: string }
+  | { type: "EXTEND_COUNTDOWN_IN_PAGE"; deadline: number; recoveryCycleId: string; actionId: string; authorizationNonce: string }
+  | { type: "STOP_COUNTDOWN"; recoveryCycleId: string; actionId: string; authorizationNonce: string; reason?: string; cancelRecovery?: boolean }
+  | { type: "RESTORE_SESSION_SNAPSHOT"; snapshot: PlayerSessionSnapshot }
   | { type: "SHOW_LOOP_WARNING"; detail: string }
   | { type: "RETRY_MONITORING" }
   | { type: "SNOOZE_UNTIL"; until: number | null }

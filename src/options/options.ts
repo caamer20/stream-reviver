@@ -1,14 +1,16 @@
 import { apiCall, ext, originPattern, sendMessage } from "../shared/api";
 import { DEFAULT_SETTINGS, DISCLAIMER } from "../shared/defaults";
+import { createDiagnosticExport } from "../shared/diagnostic-export";
 import { localizeDocument } from "../shared/i18n";
-import { getDisclaimerAcknowledged, getSettings, normalizeSettings, setSettings } from "../shared/settings";
+import { getDisclaimerAcknowledged, getSettings, normalizeSettings, SETTINGS_STORAGE_KEYS, setSettings } from "../shared/settings";
 import { normalizeProfile, profileToSiteOverrides } from "../shared/profiles";
 import type { DataClearTarget, GlobalSettings, HistoryEvent, RecoveryAction, RuntimeMessage, SelectorField, SelectorValidationResult, Settings, SiteProfile, SiteSettings } from "../shared/types";
 
 localizeDocument();
 
 const scalarFields: Array<{ key: keyof GlobalSettings; label: string; type: "checkbox" | "number" }> = [
-  ["autoRefresh", "Automatic refresh", "checkbox"], ["autoMaximize", "Automatic maximize", "checkbox"],
+  ["autoRecover", "Automatic recovery", "checkbox"], ["autoRefresh", "Automatic page refresh", "checkbox"],
+  ["autoMaximize", "Automatic maximize", "checkbox"],
   ["checkIntervalSeconds", "Check interval (seconds)", "number"], ["healthyCheckIntervalSeconds", "Healthy interval (seconds)", "number"],
   ["suspectCheckIntervalSeconds", "Suspect interval (seconds)", "number"], ["mutationDebounceMs", "DOM debounce (ms)", "number"],
   ["stallTimeoutSeconds", "Stall timeout (seconds)", "number"], ["pageLoadGraceSeconds", "Page-load grace (seconds)", "number"],
@@ -47,6 +49,11 @@ const selectorFields: Array<{ key: SelectorField; label: string; placeholder: st
 ];
 
 const globalKeys: Array<keyof GlobalSettings> = ["enabled", ...scalarFields.map((item) => item.key)];
+const OPTIONS_MODE_KEY = "streamReviverOptionsDetailLevelV1";
+const basicSettingIds = new Set([
+  "enabled", "autoRecover", "autoRefresh", "autoMaximize", "stallTimeoutSeconds", "refreshCountdownSeconds",
+  "maxAutoRefreshes", "onlyWhenTabVisible", "useCssMaximizeFallback", "showBadge", "showNotifications"
+]);
 const siteList = byId<HTMLSelectElement>("site-list");
 const siteEditor = byId("site-editor");
 const feedback = byId("feedback");
@@ -56,7 +63,13 @@ let pendingImport: unknown = null;
 let history: HistoryEvent[] = [];
 let profiles: SiteProfile[] = [];
 let visualPrivacyAcknowledged = false;
+let disclaimerAcknowledged = false;
+let grantedOrigins = new Set<string>();
+let grantedOptionalPermissions = new Set<string>();
 let reloading = false;
+const dirtyScopes = new Set<"global" | "site" | "data">();
+let externalSettingsPending = false;
+let pendingDiagnosticExport: Record<string, unknown> | null = null;
 void initialize();
 
 async function initialize(): Promise<void> {
@@ -65,22 +78,41 @@ async function initialize(): Promise<void> {
   buildRecoveryFields("global-recovery-actions", "global");
   buildRecoveryFields("site-recovery-actions", "site");
   buildSelectorFields();
+  applySettingsMetadata();
   bindEvents();
+  await loadSettingsMode();
   await reload();
   if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
 }
 
 function bindEvents(): void {
   byId("save-global").addEventListener("click", () => void saveGlobal());
+  byId<HTMLInputElement>("settings-search").addEventListener("input", filterSettings);
+  byId("basic-mode").addEventListener("click", () => void setSettingsMode("basic"));
+  byId("advanced-mode").addEventListener("click", () => void setSettingsMode("advanced"));
   byId("add-site").addEventListener("click", () => void addSite());
   byId("save-site").addEventListener("click", () => void saveSite());
   byId("remove-site").addEventListener("click", () => void removeSite());
-  siteList.addEventListener("change", () => { selectedOrigin = siteList.value || null; renderSiteEditor(); });
+  siteList.addEventListener("change", () => {
+    const next = siteList.value || null;
+    if (dirtyScopes.has("site") && next !== selectedOrigin && !confirm("Discard unsaved changes for the current site?")) {
+      siteList.value = selectedOrigin ?? "";
+      return;
+    }
+    dirtyScopes.delete("site");
+    selectedOrigin = next;
+    renderSiteEditor();
+    renderDirtyState();
+  });
   byId("export-settings").addEventListener("click", exportSettings);
   byId<HTMLInputElement>("import-file").addEventListener("change", readImportFile);
   byId("import-settings").addEventListener("click", () => void importSettings());
   byId("reset-settings").addEventListener("click", () => void resetSettings());
   byId("export-diagnostics").addEventListener("click", exportDiagnostics);
+  byId("download-diagnostics").addEventListener("click", downloadDiagnosticExport);
+  for (const id of ["diagnostic-include-origins", "diagnostic-include-paths", "diagnostic-include-selectors", "diagnostic-include-browser"]) {
+    byId(id).addEventListener("change", refreshDiagnosticPreview);
+  }
   byId("clear-diagnostics").addEventListener("click", () => void clearDiagnostics());
   document.querySelectorAll<HTMLButtonElement>("[data-clear]").forEach((button) => button.addEventListener("click", () => void clearLocalData(button.dataset.clear as Exclude<DataClearTarget, "all">)));
   byId("delete-all-data").addEventListener("click", () => void deleteAllData());
@@ -94,22 +126,100 @@ function bindEvents(): void {
     await sendMessage({ type: "ACKNOWLEDGE_DISCLAIMER" } satisfies RuntimeMessage);
     await renderAcknowledgement(); showFeedback("Disclaimer acknowledged.");
   });
-  ext.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && changes.streamReviverSettings && !reloading) void reload();
+  byId("discard-unsaved").addEventListener("click", () => void reload());
+  byId("main-content").addEventListener("input", markDirtyFromEvent);
+  byId("main-content").addEventListener("change", markDirtyFromEvent);
+  window.addEventListener("beforeunload", (event) => {
+    if (!dirtyScopes.size) return;
+    event.preventDefault();
   });
+  ext.storage.onChanged.addListener((changes, area) => {
+    const settingsChanged = (area === "sync" && !!changes[SETTINGS_STORAGE_KEYS.global])
+      || (area === "local" && !!changes[SETTINGS_STORAGE_KEYS.sites]);
+    if (!settingsChanged || reloading) return;
+    if (dirtyScopes.size) {
+      externalSettingsPending = true;
+      renderDirtyState();
+      showFeedback("Settings changed in another extension window. Save or discard this draft before reloading.");
+    } else void reload();
+  });
+}
+
+function applySettingsMetadata(): void {
+  document.querySelectorAll<HTMLElement>(".setting-grid > label").forEach((row) => row.classList.add("advanced-setting"));
+  for (const id of basicSettingIds) byId(id).closest("label")?.classList.remove("advanced-setting");
+  document.querySelectorAll<HTMLElement>(".override-row").forEach((row) => row.classList.add("advanced-setting"));
+  for (const id of basicSettingIds) document.getElementById(`override-${id}`)?.closest(".override-row")?.classList.remove("advanced-setting");
+  byId("selector-fields").closest("fieldset")?.classList.add("advanced-setting");
+  byId("includeUrlPatterns").closest("fieldset")?.classList.add("advanced-setting");
+  byId("declaredPlayerType").closest("fieldset")?.classList.add("advanced-setting");
+  byId("profile-list").closest("fieldset")?.classList.add("advanced-setting");
+}
+
+async function loadSettingsMode(): Promise<void> {
+  const stored: Record<string, unknown> = await apiCall<Record<string, unknown>>(
+    ext.storage.local.get, ext.storage.local, OPTIONS_MODE_KEY
+  ).catch(() => ({} as Record<string, unknown>));
+  applySettingsMode(stored[OPTIONS_MODE_KEY] === "advanced" ? "advanced" : "basic");
+}
+
+async function setSettingsMode(mode: "basic" | "advanced"): Promise<void> {
+  applySettingsMode(mode);
+  await apiCall<void>(ext.storage.local.set, ext.storage.local, { [OPTIONS_MODE_KEY]: mode }).catch(() => undefined);
+  filterSettings();
+}
+
+function applySettingsMode(mode: "basic" | "advanced"): void {
+  document.body.dataset.settingsMode = mode;
+  byId("basic-mode").setAttribute("aria-pressed", String(mode === "basic"));
+  byId("advanced-mode").setAttribute("aria-pressed", String(mode === "advanced"));
+}
+
+function filterSettings(): void {
+  const query = byId<HTMLInputElement>("settings-search").value.trim().toLocaleLowerCase();
+  const basic = document.body.dataset.settingsMode !== "advanced";
+  const rows = [...document.querySelectorAll<HTMLElement>(
+    ".setting-grid > label, .override-row, .selector-row, .check-grid > label, fieldset > label, .data-inventory > div"
+  )];
+  let matches = 0;
+  for (const row of rows) {
+    const levelHidden = basic && row.classList.contains("advanced-setting");
+    const matched = !query || row.textContent?.toLocaleLowerCase().includes(query);
+    row.hidden = Boolean(query && (!matched || levelHidden));
+    if (query && matched && !levelHidden) matches += 1;
+  }
+  document.querySelectorAll<HTMLElement>("fieldset").forEach((group) => {
+    if (!query) { group.hidden = false; return; }
+    if (basic && group.classList.contains("advanced-setting")) { group.hidden = true; return; }
+    group.hidden = !group.textContent?.toLocaleLowerCase().includes(query);
+  });
+  document.querySelectorAll<HTMLElement>("main > section.card").forEach((section) => {
+    section.hidden = Boolean(query && !section.textContent?.toLocaleLowerCase().includes(query));
+  });
+  byId("search-empty").hidden = !query || matches > 0 || [...document.querySelectorAll<HTMLElement>("main > section.card:not([hidden])")].length > 0;
 }
 
 async function reload(): Promise<void> {
   reloading = true;
   try {
-    settings = await getSettings();
-    const privacy = await sendMessage<{ visualPrivacyAcknowledged: boolean }>({ type: "GET_PRIVACY_STATE" } satisfies RuntimeMessage);
+    const [loadedSettings, privacy, granted] = await Promise.all([
+      getSettings(),
+      sendMessage<{ visualPrivacyAcknowledged: boolean }>({ type: "GET_PRIVACY_STATE" } satisfies RuntimeMessage),
+      apiCall<chrome.permissions.Permissions>(ext.permissions.getAll, ext.permissions)
+        .catch((): chrome.permissions.Permissions => ({}))
+    ]);
+    settings = loadedSettings;
     visualPrivacyAcknowledged = privacy.visualPrivacyAcknowledged;
+    grantedOrigins = new Set(granted.origins ?? []);
+    grantedOptionalPermissions = new Set(granted.permissions ?? []);
     [history, profiles] = await Promise.all([
       sendMessage<HistoryEvent[]>({ type: "GET_HISTORY", limit: 500 } satisfies RuntimeMessage),
       sendMessage<SiteProfile[]>({ type: "GET_PROFILES" } satisfies RuntimeMessage)
     ]);
     renderGlobal(); renderSites(); renderProfiles(); renderDiagnostics(); renderPrivacy(); await renderAcknowledgement();
+    dirtyScopes.clear();
+    externalSettingsPending = false;
+    renderDirtyState();
   } finally { reloading = false; }
 }
 
@@ -216,6 +326,7 @@ function buildSelectorFields(): void {
 }
 
 async function saveGlobal(): Promise<void> {
+  let addedNotificationPermission = false;
   try {
     const proposed = { ...settings } as Settings;
     for (const key of globalKeys) {
@@ -224,61 +335,120 @@ async function saveGlobal(): Promise<void> {
     proposed.recoveryStrategy = recoveryActions.filter((action) => byId<HTMLInputElement>(`global-action-${action}`).checked);
     if (!proposed.recoveryStrategy.length) throw new Error("Select at least one recovery action.");
     proposed.recoveryBackoffSeconds = parseNumbers(byId<HTMLInputElement>("recoveryBackoffSeconds").value);
-    if (proposed.enableVisualWatchdog && !await ensureVisualConsent()) proposed.enableVisualWatchdog = false;
     if (proposed.showNotifications && !settings.showNotifications) {
+      const hadPermission = grantedOptionalPermissions.has("notifications");
       proposed.showNotifications = await apiCall<boolean>(ext.permissions.request, ext.permissions, { permissions: ["notifications"] });
+      if (proposed.showNotifications) {
+        addedNotificationPermission = !hadPermission;
+        grantedOptionalPermissions.add("notifications");
+      }
     }
+    if (proposed.enableVisualWatchdog && !await ensureVisualConsent()) proposed.enableVisualWatchdog = false;
     settings = await setSettings(proposed);
     if (!settings.showNotifications && !Object.values(settings.perSite).some((site) => site.showNotifications === true)) {
       await apiCall<boolean>(ext.permissions.remove, ext.permissions, { permissions: ["notifications"] }).catch(() => false);
     }
-    renderGlobal(); showFeedback("Global defaults saved.");
-  } catch (error) { showError(error); }
+    renderGlobal(); clearDirty("global"); showFeedback("Global defaults saved.");
+  } catch (error) {
+    if (addedNotificationPermission) {
+      await apiCall<boolean>(ext.permissions.remove, ext.permissions, { permissions: ["notifications"] }).catch(() => false);
+      grantedOptionalPermissions.delete("notifications");
+    }
+    showError(error);
+  }
 }
 
 async function addSite(): Promise<void> {
   try {
     const input = byId<HTMLInputElement>("new-origin"); const origin = normalizeOriginInput(input.value);
     if (!origin) throw new Error("Enter an http:// or https:// origin, such as https://example.com.");
-    settings.perSite[origin] ??= { enabled: false }; settings = await setSettings(settings); selectedOrigin = origin; input.value = ""; renderSites();
+    settings.perSite[origin] ??= { enabled: false }; settings = await setSettings(settings); selectedOrigin = origin; input.value = ""; renderSites(); clearDirty("site");
     showFeedback("Site added. Enable it when ready to grant access.");
   } catch (error) { showError(error); }
 }
 
 async function saveSite(): Promise<void> {
   if (!selectedOrigin) return;
+  const origin = selectedOrigin;
+  const previous = structuredClone(settings.perSite[origin] ?? {});
+  const pattern = originPattern(origin);
+  const requestedOriginPattern = byId<HTMLInputElement>("site-enabled").checked ? pattern : null;
+  const hadOriginPermission = requestedOriginPattern
+    ? grantedOrigins.has(requestedOriginPattern) || grantedOrigins.has("<all_urls>")
+    : false;
+  const hadNotificationPermission = grantedOptionalPermissions.has("notifications");
+  let configurationWritten = false;
   try {
     const enable = byId<HTMLInputElement>("site-enabled").checked;
-    if (enable && !await getDisclaimerAcknowledged()) throw new Error("Acknowledge the disclaimer before enabling monitoring.");
+    if (enable && !disclaimerAcknowledged) throw new Error("Acknowledge the disclaimer before enabling monitoring.");
     const wantsNotifications = byId<HTMLInputElement>("override-showNotifications").checked && byId<HTMLInputElement>("site-showNotifications").checked;
     const wantsVisual = byId<HTMLInputElement>("override-enableVisualWatchdog").checked && byId<HTMLInputElement>("site-enableVisualWatchdog").checked;
-    if (wantsVisual && !await ensureVisualConsent()) byId<HTMLInputElement>("site-enableVisualWatchdog").checked = false;
+
+    // Build and validate the complete draft before requesting access or
+    // changing the active registration. This prevents a partially enabled site
+    // from briefly running with unrelated global defaults after a parse error.
+    const overrides = collectSiteOverrides(enable);
     if (enable || wantsNotifications) {
-      const pattern = enable ? originPattern(selectedOrigin) : null;
       const request: chrome.permissions.Permissions = {};
-      if (pattern) request.origins = [pattern]; if (wantsNotifications) request.permissions = ["notifications"];
+      if (requestedOriginPattern) request.origins = [requestedOriginPattern]; if (wantsNotifications) request.permissions = ["notifications"];
       if (!await apiCall<boolean>(ext.permissions.request, ext.permissions, request)) throw new Error("Requested browser access was not granted.");
+      if (requestedOriginPattern) grantedOrigins.add(requestedOriginPattern);
+      if (wantsNotifications) grantedOptionalPermissions.add("notifications");
     }
-    const result = await sendMessage<{ ok: boolean; error?: string }>({ type: "SET_SITE_ENABLED", origin: selectedOrigin, enabled: enable } satisfies RuntimeMessage);
+    if (wantsVisual && !await ensureVisualConsent()) {
+      byId<HTMLInputElement>("site-enableVisualWatchdog").checked = false;
+      if (Object.prototype.hasOwnProperty.call(overrides, "enableVisualWatchdog")) overrides.enableVisualWatchdog = false;
+    }
+
+    // Existing enabled sites remain enabled while their complete configuration
+    // is replaced. Newly enabled sites are stored disabled until registration
+    // succeeds in the following step.
+    overrides.enabled = previous.enabled === true && enable;
+    const saved = await sendMessage<{ ok: boolean; error?: string }>({ type: "SET_SITE_OVERRIDES", origin, overrides, replace: true } satisfies RuntimeMessage);
+    if (!saved.ok) throw new Error(saved.error || "Could not save the complete site configuration.");
+    configurationWritten = true;
+    const result = await sendMessage<{ ok: boolean; error?: string }>({ type: "SET_SITE_ENABLED", origin, enabled: enable } satisfies RuntimeMessage);
     if (!result.ok) throw new Error(result.error || "Could not update site access.");
-    const overrides: SiteSettings = { enabled: enable };
-    for (const item of scalarFields) {
-      if (!byId<HTMLInputElement>(`override-${String(item.key)}`).checked) continue;
-      const input = byId<HTMLInputElement>(`site-${String(item.key)}`); (overrides as any)[item.key] = item.type === "checkbox" ? input.checked : Number(input.value);
-    }
-    for (const item of selectorFields) overrides[item.key] = byId<HTMLInputElement>(item.key).value.trim();
-    overrides.includeUrlPatterns = splitLines(byId<HTMLTextAreaElement>("includeUrlPatterns").value);
-    overrides.excludeUrlPatterns = splitLines(byId<HTMLTextAreaElement>("excludeUrlPatterns").value);
-    overrides.declaredPlayerType = byId<HTMLSelectElement>("declaredPlayerType").value as SiteSettings["declaredPlayerType"];
-    overrides.backupUrls = splitLines(byId<HTMLTextAreaElement>("backupUrls").value);
-    if (byId<HTMLInputElement>("override-recoveryStrategy").checked) {
-      overrides.recoveryStrategy = recoveryActions.filter((action) => byId<HTMLInputElement>(`site-action-${action}`).checked);
-      if (!overrides.recoveryStrategy.length) throw new Error("Select at least one site recovery action.");
-    }
-    if (byId<HTMLInputElement>("override-recoveryBackoffSeconds").checked) overrides.recoveryBackoffSeconds = parseNumbers(byId<HTMLInputElement>("site-recoveryBackoffSeconds").value);
-    await sendMessage({ type: "SET_SITE_OVERRIDES", origin: selectedOrigin, overrides, replace: true } satisfies RuntimeMessage);
     await reload(); showFeedback(enable ? "Site settings and access saved." : "Site settings saved; access is disabled.");
-  } catch (error) { showError(error); }
+  } catch (error) {
+    if (configurationWritten) {
+      await sendMessage({ type: "SET_SITE_OVERRIDES", origin, overrides: previous, replace: true } satisfies RuntimeMessage).catch(() => undefined);
+      await sendMessage({ type: "SET_SITE_ENABLED", origin, enabled: previous.enabled === true } satisfies RuntimeMessage).catch(() => undefined);
+    }
+    if (requestedOriginPattern && !hadOriginPermission) {
+      await apiCall<boolean>(ext.permissions.remove, ext.permissions, { origins: [requestedOriginPattern] }).catch(() => false);
+      grantedOrigins.delete(requestedOriginPattern);
+    }
+    if (!hadNotificationPermission) {
+      await apiCall<boolean>(ext.permissions.remove, ext.permissions, { permissions: ["notifications"] }).catch(() => false);
+      grantedOptionalPermissions.delete("notifications");
+    }
+    showError(error);
+  }
+}
+
+function collectSiteOverrides(enable: boolean): SiteSettings {
+  const overrides: SiteSettings = { enabled: enable };
+  for (const item of scalarFields) {
+    if (!byId<HTMLInputElement>(`override-${String(item.key)}`).checked) continue;
+    const input = byId<HTMLInputElement>(`site-${String(item.key)}`);
+    const value = item.type === "checkbox" ? input.checked : Number(input.value);
+    if (item.type === "number" && !Number.isFinite(value)) throw new Error(`${item.label} must be a finite number.`);
+    (overrides as any)[item.key] = value;
+  }
+  for (const item of selectorFields) overrides[item.key] = byId<HTMLInputElement>(item.key).value.trim();
+  overrides.includeUrlPatterns = splitLines(byId<HTMLTextAreaElement>("includeUrlPatterns").value);
+  overrides.excludeUrlPatterns = splitLines(byId<HTMLTextAreaElement>("excludeUrlPatterns").value);
+  overrides.declaredPlayerType = byId<HTMLSelectElement>("declaredPlayerType").value as SiteSettings["declaredPlayerType"];
+  overrides.backupUrls = splitLines(byId<HTMLTextAreaElement>("backupUrls").value);
+  if (byId<HTMLInputElement>("override-recoveryStrategy").checked) {
+    overrides.recoveryStrategy = recoveryActions.filter((action) => byId<HTMLInputElement>(`site-action-${action}`).checked);
+    if (!overrides.recoveryStrategy.length) throw new Error("Select at least one site recovery action.");
+  }
+  if (byId<HTMLInputElement>("override-recoveryBackoffSeconds").checked) {
+    overrides.recoveryBackoffSeconds = parseNumbers(byId<HTMLInputElement>("site-recoveryBackoffSeconds").value);
+  }
+  return overrides;
 }
 
 async function startPicker(field: SelectorField): Promise<void> {
@@ -366,7 +536,29 @@ function renderDiagnostics(): void {
   }));
 }
 function exportDiagnostics(): void {
-  downloadJson({ exportedAt: new Date().toISOString(), extensionVersion: ext.runtime.getManifest().version, userAgent: navigator.userAgent, settings, history }, `stream-reviver-diagnostics-${dateStamp()}.json`);
+  byId<HTMLDialogElement>("diagnostic-export-dialog").showModal();
+  refreshDiagnosticPreview();
+}
+function refreshDiagnosticPreview(): void {
+  const includeOrigins = byId<HTMLInputElement>("diagnostic-include-origins").checked;
+  const includeUrlPaths = byId<HTMLInputElement>("diagnostic-include-paths").checked;
+  const includeSelectors = byId<HTMLInputElement>("diagnostic-include-selectors").checked;
+  const includeBrowserDetails = byId<HTMLInputElement>("diagnostic-include-browser").checked;
+  pendingDiagnosticExport = createDiagnosticExport({
+    exportedAt: new Date().toISOString(), extensionVersion: ext.runtime.getManifest().version,
+    browserDetails: navigator.userAgent, settings, history
+  }, { includeOrigins, includeUrlPaths, includeSelectors, includeBrowserDetails });
+  const preview = JSON.stringify(pendingDiagnosticExport, null, 2);
+  byId("diagnostic-export-summary").textContent = `${preview.length.toLocaleString()} characters · ${history.length} event${history.length === 1 ? "" : "s"}. Review before downloading.`;
+  byId("diagnostic-export-preview").textContent = preview.slice(0, 30_000) + (preview.length > 30_000
+    ? "\n…preview truncated; the downloaded file contains the complete redacted export." : "");
+}
+function downloadDiagnosticExport(): void {
+  if (!pendingDiagnosticExport) return;
+  downloadJson(pendingDiagnosticExport, `stream-reviver-diagnostics-${dateStamp()}.json`);
+  byId<HTMLDialogElement>("diagnostic-export-dialog").close();
+  pendingDiagnosticExport = null;
+  showFeedback("Diagnostic bundle exported with the selected redaction settings.");
 }
 
 function renderProfiles(): void {
@@ -459,7 +651,9 @@ async function deleteAllData(): Promise<void> {
 }
 
 async function renderAcknowledgement(): Promise<void> {
-  const acknowledged = await getDisclaimerAcknowledged(); byId("ack-state").textContent = acknowledged ? "✓ Disclaimer acknowledged" : "Acknowledgement is required before monitoring can be enabled."; byId<HTMLButtonElement>("acknowledge").hidden = acknowledged;
+  disclaimerAcknowledged = await getDisclaimerAcknowledged();
+  byId("ack-state").textContent = disclaimerAcknowledged ? "✓ Disclaimer acknowledged" : "Acknowledgement is required before monitoring can be enabled.";
+  byId<HTMLButtonElement>("acknowledge").hidden = disclaimerAcknowledged;
 }
 function parseNumbers(value: string): number[] {
   const values = value.split(",").map((item) => Number(item.trim())).filter((item) => Number.isFinite(item) && item > 0);
@@ -474,6 +668,31 @@ function downloadJson(value: unknown, filename: string): void {
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
 }
 function dateStamp(): string { return new Date().toISOString().slice(0, 10); }
+function markDirtyFromEvent(event: Event): void {
+  if (reloading) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (["site-list", "profile-list", "import-file", "new-origin"].includes(target.id)) return;
+  const section = target.closest("section")?.id;
+  if (section === "global") dirtyScopes.add("global");
+  else if (section === "sites") dirtyScopes.add("site");
+  else if (section === "data") dirtyScopes.add("data");
+  else return;
+  renderDirtyState();
+}
+function clearDirty(scope: "global" | "site" | "data"): void {
+  dirtyScopes.delete(scope);
+  renderDirtyState();
+  if (!dirtyScopes.size && externalSettingsPending && !reloading) void reload();
+}
+function renderDirtyState(): void {
+  const bar = byId("dirty-bar");
+  bar.hidden = dirtyScopes.size === 0 && !externalSettingsPending;
+  const sections = [...dirtyScopes].map((scope) => scope === "global" ? "defaults" : scope === "site" ? "site" : "profile/import");
+  byId("dirty-copy").textContent = externalSettingsPending
+    ? `Unsaved ${sections.join(" and ") || "settings"}; a newer saved version is also available.`
+    : `Unsaved ${sections.join(" and ")} changes.`;
+}
 function showFeedback(message: string): void { feedback.textContent = message; window.setTimeout(() => { if (feedback.textContent === message) feedback.textContent = ""; }, 7000); }
 function showError(error: unknown): void { feedback.textContent = error instanceof Error ? error.message : String(error); }
 function byId<T extends HTMLElement = HTMLElement>(id: string): T { const element = document.getElementById(id); if (!element) throw new Error(`Missing element #${id}`); return element as T; }

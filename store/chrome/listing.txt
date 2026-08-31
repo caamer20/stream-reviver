@@ -11,11 +11,12 @@ LANGUAGE
 English (en)
 
 PRIVACY DISCLOSURES
-No data is sold or transmitted by extension code. Settings, enabled origins, selectors, diagnostics, and local models remain in browser extension storage. Optional visual sampling is processed ephemerally in memory. Publish docs/PRIVACY.md at HTTPS before submission.
+No data is sold or transmitted externally by extension code. Settings, enabled origins, selectors, diagnostics, and local models remain in browser extension storage. Optional visual sampling is processed ephemerally in the privileged background; only a fixed comparison hash reaches the requesting content script and no image bytes are stored or returned. Publish docs/PRIVACY.md at HTTPS before submission.
 
 PERMISSION JUSTIFICATION
 storage: local/synced settings and bounded recovery state.
 activeTab: explicit user controls and opt-in active-tab visual samples.
 scripting: per-origin dynamic content-script registration after consent.
+alarms: one-shot recovery/countdown deadlines that survive MV3 service-worker suspension; no browsing access.
 notifications: optional loop-protection warnings.
 optional host access: exact origins selected by the user; no persistent all-sites grant.

@@ -3,24 +3,43 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed-release tag to package (vX.Y.Z)
+        required: true
+        type: string
 permissions:
   contents: read
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+env:
+  STREAM_REVIVER_EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 jobs:
   package:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ env.STREAM_REVIVER_EXPECTED_TAG }}
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
+          node-version: 24.2.0
           cache: npm
+      - run: npm install --global npm@11.4.2
       - run: npm ci
-      - run: npm run package
-      - uses: actions/upload-artifact@v4
+      - run: npm run check:toolchain
+      - name: Build and package the tagged clean source
+        run: npm run package:tagged
+      - name: Rebuild twice in independent clean workspaces
+        run: npm run verify:reproducible -- --require-tag
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: stream-reviver-${{ github.ref_name }}
+          name: stream-reviver-${{ env.STREAM_REVIVER_EXPECTED_TAG }}
           path: artifacts/
           if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

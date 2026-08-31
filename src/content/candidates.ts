@@ -8,11 +8,13 @@ export interface VideoSelection {
 
 export class VideoCandidateManager {
   private readonly videos = new Set<HTMLVideoElement>();
+  private readonly shadowRoots = new Set<ShadowRoot>();
   private readonly visibleRatios = new WeakMap<HTMLVideoElement, number>();
   private observer: MutationObserver | null = null;
   private intersection: IntersectionObserver | null = null;
   private resize: ResizeObserver | null = null;
   private debounceId: number | null = null;
+  private lastShadowScanAt = 0;
 
   constructor(private readonly onRelevantChange: () => void, private debounceMs: number) {}
 
@@ -24,7 +26,6 @@ export class VideoCandidateManager {
         }, { threshold: [0, 0.1, 0.5, 0.9] })
       : null;
     this.resize = typeof ResizeObserver === "function" ? new ResizeObserver(() => this.scheduleChange()) : null;
-    this.addTree(document);
     if (!document.documentElement) return;
     this.observer = new MutationObserver((mutations) => {
       let relevant = false;
@@ -34,17 +35,16 @@ export class VideoCandidateManager {
           continue;
         }
         for (const node of mutation.addedNodes) relevant = this.addTree(node) || relevant;
-        for (const node of mutation.removedNodes) relevant = this.removeTree(node) || relevant;
+        for (const node of mutation.removedNodes) {
+          relevant = this.removeTree(node) || relevant;
+          if (this.removeShadowRoots(node)) this.refreshObservationTargets();
+        }
         if (!relevant && mutation.target instanceof Element && mutation.target.closest("video, iframe")) relevant = true;
       }
       if (relevant) this.scheduleChange();
     });
-    this.observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["class", "style", "hidden", "src"]
-    });
+    this.observeTarget(document.documentElement);
+    this.addTree(document);
   }
 
   updateDebounce(milliseconds: number): void {
@@ -88,6 +88,7 @@ export class VideoCandidateManager {
     this.resize?.disconnect();
     if (this.debounceId !== null) window.clearTimeout(this.debounceId);
     this.videos.clear();
+    this.shadowRoots.clear();
   }
 
   private addTree(node: Node): boolean {
@@ -96,6 +97,7 @@ export class VideoCandidateManager {
     if (node instanceof Document || node instanceof Element || node instanceof DocumentFragment) {
       for (const video of node.querySelectorAll?.("video") ?? []) added = this.addVideo(video as HTMLVideoElement) || added;
     }
+    added = this.discoverOpenShadowRoots(node) || added;
     return added || node instanceof HTMLIFrameElement;
   }
 
@@ -127,14 +129,83 @@ export class VideoCandidateManager {
 
   private prune(): void {
     for (const video of this.videos) if (!video.isConnected) this.removeVideo(video);
+    let rootsChanged = false;
+    for (const root of this.shadowRoots) {
+      if (!root.host.isConnected) {
+        this.shadowRoots.delete(root);
+        rootsChanged = true;
+      }
+    }
+    if (rootsChanged) this.refreshObservationTargets();
+    // attachShadow() itself does not necessarily produce a light-DOM mutation.
+    // A throttled scan finds newly attached open roots without continuously
+    // walking high-churn documents.
+    if (Date.now() - this.lastShadowScanAt >= 10_000) {
+      this.lastShadowScanAt = Date.now();
+      this.discoverOpenShadowRoots(document);
+    }
   }
 
   private findPinned(selector: string): HTMLVideoElement | null {
     if (!selector) return null;
     try {
-      const element = document.querySelector(selector);
-      return element instanceof HTMLVideoElement && element.isConnected ? element : element?.querySelector("video") ?? null;
+      for (const root of [document, ...this.shadowRoots] as Array<Document | ShadowRoot>) {
+        const element = root.querySelector(selector);
+        if (element instanceof HTMLVideoElement && element.isConnected) return element;
+        const nested = element?.querySelector("video");
+        if (nested instanceof HTMLVideoElement && nested.isConnected) return nested;
+      }
+      return null;
     } catch { return null; }
+  }
+
+  private discoverOpenShadowRoots(node: Node): boolean {
+    let changed = false;
+    const inspect = (element: Element): void => {
+      const root = element.shadowRoot;
+      if (!root || this.shadowRoots.has(root)) return;
+      this.shadowRoots.add(root);
+      this.observeTarget(root);
+      this.addTree(root);
+      changed = true;
+    };
+    if (node instanceof Element) inspect(node);
+    if (node instanceof Document || node instanceof Element || node instanceof DocumentFragment) {
+      for (const element of node.querySelectorAll?.("*") ?? []) inspect(element);
+    }
+    return changed;
+  }
+
+  private removeShadowRoots(node: Node): boolean {
+    let changed = false;
+    const remove = (element: Element): void => {
+      const root = element.shadowRoot;
+      if (!root || !this.shadowRoots.delete(root)) return;
+      for (const video of root.querySelectorAll("video")) this.removeVideo(video);
+      for (const nested of root.querySelectorAll("*")) remove(nested);
+      changed = true;
+    };
+    if (node instanceof Element) remove(node);
+    if (node instanceof Element || node instanceof DocumentFragment) {
+      for (const element of node.querySelectorAll?.("*") ?? []) remove(element);
+    }
+    return changed;
+  }
+
+  private observeTarget(target: Node): void {
+    this.observer?.observe(target, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "hidden", "src"]
+    });
+  }
+
+  private refreshObservationTargets(): void {
+    if (!this.observer || !document.documentElement) return;
+    this.observer.disconnect();
+    this.observeTarget(document.documentElement);
+    for (const root of this.shadowRoots) if (root.host.isConnected) this.observeTarget(root);
   }
 
   private score(video: HTMLVideoElement, interactionAt: number, frameFactor: number): number {

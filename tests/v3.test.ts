@@ -11,8 +11,9 @@ import { isRuntimeMessage } from "../src/shared/validation";
 const base: PlayerObservation = {
   timestamp: 1_000, currentTime: 10, duration: Infinity, paused: false, ended: false, readyState: 4, networkState: 2,
   timeAdvanced: true, framesAdvanced: true, presentedFrames: 100, droppedFrameRatio: 0, bufferAheadSeconds: 8,
-  liveEdge: 11, liveEdgeLagSeconds: 1, waitingEvents: 0, explicitError: "", online: true, hidden: false,
-  userPaused: false, recentBackwardSeek: false, accessInterruption: "", adTransition: false, lifecycleGapMs: 1_000, protocol: null
+  seekableStart: 0, liveEdge: 11, liveEdgeLagSeconds: 1, waitingEvents: 0, explicitError: "", online: true, hidden: false,
+  userPaused: false, playbackIntent: "PLAYING", playbackIntentDurationMs: 1_000, playbackControlError: "",
+  recentBackwardSeek: false, accessInterruption: "", adTransition: false, lifecycleGapMs: 1_000, protocol: null
 };
 const settings = effectiveSettings(normalizeSettings({ perSite: { "https://example.com": { enabled: true, retryButtonSelector: ".retry", backupUrls: ["https://backup.example/live"] } } }), "https://example.com");
 
@@ -45,7 +46,7 @@ test("browser resume is not mistaken for a stall", () => {
 
 test("advancing live edge with excess lag diagnoses drift", () => {
   const samples = [
-    { ...base, currentTime: 1, liveEdge: 40, liveEdgeLagSeconds: 39 },
+    { ...base, currentTime: 39, liveEdge: 40, liveEdgeLagSeconds: 1 },
     { ...base, timestamp: 2_000, currentTime: 2, liveEdge: 42, liveEdgeLagSeconds: 40 },
     { ...base, timestamp: 3_000, currentTime: 3, liveEdge: 44, liveEdgeLagSeconds: 41 }
   ];
@@ -58,12 +59,12 @@ test("intentional rewind suppresses live-edge recovery", () => {
 });
 
 test("media-time progress without frames diagnoses render freeze", () => {
-  const samples = [{ ...base, framesAdvanced: false }, { ...base, timestamp: 2_000, currentTime: 11, framesAdvanced: false }];
+  const samples = [{ ...base, framesAdvanced: false }, { ...base, timestamp: 13_000, currentTime: 22, framesAdvanced: false }];
   assert.equal(diagnoseFailure(samples[1], trends(samples), settings).kind, "RENDER_FREEZE");
 });
 
 test("empty non-growing buffer diagnoses underrun", () => {
-  const samples = [{ ...base, timeAdvanced: false, framesAdvanced: false, readyState: 1, bufferAheadSeconds: 0 }, { ...base, timestamp: 2_000, timeAdvanced: false, framesAdvanced: false, readyState: 1, bufferAheadSeconds: 0 }];
+  const samples = [{ ...base, timeAdvanced: false, framesAdvanced: false, readyState: 1, bufferAheadSeconds: 0 }, { ...base, timestamp: 13_000, timeAdvanced: false, framesAdvanced: false, readyState: 1, bufferAheadSeconds: 0 }];
   assert.equal(diagnoseFailure(samples[1], trends(samples), settings).kind, "BUFFER_UNDERRUN");
 });
 
@@ -135,9 +136,11 @@ test("runtime message validation rejects unknown, oversized, and deeply nested i
 
 test("adaptive ordering requires enough local evidence", () => {
   let model = emptySiteModel("https://example.com");
-  model.sessionCount = 5; model.sampleCount = 30;
-  model.actionOutcomes.PLAY = { successes: 0, failures: 10, averageDurationMs: 100 };
-  model.actionOutcomes.RETRY_BUTTON = { successes: 10, failures: 0, averageDurationMs: 100 };
+  model.sessionCount = 5;
+  for (let index = 0; index < 10; index += 1) {
+    model = addActionOutcome(model, { action: "PLAY", failureKind: "DECODE_FREEZE", success: false, durationMs: 100, timestamp: index });
+    model = addActionOutcome(model, { action: "RETRY_BUTTON", failureKind: "DECODE_FREEZE", success: true, durationMs: 100, timestamp: index });
+  }
   const plan = planRecovery("DECODE_FREEZE", settings, model);
   assert.ok(plan.indexOf("RETRY_BUTTON") < plan.indexOf("PLAY"));
 });

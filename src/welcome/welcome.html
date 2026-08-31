@@ -9,23 +9,72 @@
   <body>
     <a class="skip-link" href="#welcome-content">Skip to onboarding</a>
     <main id="welcome-content" tabindex="-1">
-      <img class="logo" src="icon-128.png" alt="" aria-hidden="true">
-      <p class="eyebrow">WELCOME TO</p>
-      <h1 data-i18n="extensionName">Stream Reviver</h1>
-      <p class="lede">A conservative, opt-in safety net for live HTML5 video streams.</p>
-      <ol class="steps" aria-label="How Stream Reviver works">
-        <li><strong>Enable one site.</strong><span>The browser grants access only to the origin you choose.</span></li>
-        <li><strong>Leave the stream playing.</strong><span>Conservative checks distinguish a sustained failure from ordinary buffering or a pause.</span></li>
-        <li><strong>Stay in control.</strong><span>Recovery starts with soft actions, shows a cancelable reload countdown, and stops at a circuit breaker.</span></li>
+      <header class="brand">
+        <img class="logo" src="icon-128.png" alt="" aria-hidden="true">
+        <div><p class="eyebrow">STREAM REVIVER</p><h1>Set up safer stream recovery</h1></div>
+      </header>
+
+      <ol class="progress" aria-label="Setup progress">
+        <li data-progress="1" aria-current="step"><span>1</span>Trust</li>
+        <li data-progress="2"><span>2</span>Recovery</li>
+        <li data-progress="3"><span>3</span>First site</li>
+        <li data-progress="4"><span>4</span>Ready</li>
       </ol>
-      <section>
-        <h2>Before enabling monitoring</h2>
-        <p id="disclaimer"></p>
+
+      <section class="step" data-step="1" aria-labelledby="trust-title">
+        <p class="kicker">Step 1 of 4</p>
+        <h2 id="trust-title" tabindex="-1">Understand what the extension can do</h2>
+        <p class="lede">Stream Reviver monitors only sites you explicitly enable. It starts with conservative, low-disruption actions and protects every page reload with limits and a cancelable countdown.</p>
+        <div class="promise-grid" aria-label="Privacy and safety guarantees">
+          <div><strong>Local by design</strong><span>No analytics, tracking, or external API calls.</span></div>
+          <div><strong>Exact-site access</strong><span>Each website permission is requested separately.</span></div>
+          <div><strong>User-controlled</strong><span>Pause, cancel, disable, or remove access at any time.</span></div>
+        </div>
+        <details class="disclaimer" open>
+          <summary>Required disclaimer</summary>
+          <p id="disclaimer"></p>
+        </details>
+        <label class="agreement"><input id="agree" type="checkbox"> <span>I have read and understand this disclaimer.</span></label>
+        <div class="actions end"><button id="continue" class="primary" type="button" disabled>Acknowledge and continue</button></div>
       </section>
-      <label><input id="agree" type="checkbox"> <span>I have read and understand this disclaimer.</span></label>
-      <button id="continue" type="button" disabled>Acknowledge and continue</button>
-      <p id="feedback" role="status"></p>
-      <p class="privacy">No analytics, tracking, or external API calls. Settings remain in browser storage.</p>
+
+      <section class="step" data-step="2" aria-labelledby="mode-title" hidden>
+        <p class="kicker">Step 2 of 4</p>
+        <h2 id="mode-title" tabindex="-1">Choose your recovery posture</h2>
+        <p class="lede">You can change this later, globally or for one site.</p>
+        <fieldset class="mode-list">
+          <legend class="visually-hidden">Recovery posture</legend>
+          <label class="mode-card recommended"><input type="radio" name="recovery-mode" value="balanced" checked><span><strong>Balanced protection <em>Recommended</em></strong><small>Soft recovery first, then a bounded page reload only when evidence stays strong.</small></span></label>
+          <label class="mode-card"><input type="radio" name="recovery-mode" value="gentle"><span><strong>Gentle recovery</strong><small>Allow soft player actions but never reload the whole page automatically.</small></span></label>
+          <label class="mode-card"><input type="radio" name="recovery-mode" value="observe"><span><strong>Monitor only</strong><small>Detect and explain problems; leave every recovery action to you.</small></span></label>
+        </fieldset>
+        <div class="actions"><button data-back="1" type="button">Back</button><button id="save-mode" class="primary" type="button">Use this posture</button></div>
+      </section>
+
+      <section class="step" data-step="3" aria-labelledby="site-title" hidden>
+        <p class="kicker">Step 3 of 4</p>
+        <h2 id="site-title" tabindex="-1">Enable your first streaming site</h2>
+        <p class="lede">Optional. Enter only the site origin—such as <code>https://example.com</code>. The browser will show its own permission prompt.</p>
+        <label class="site-field" for="first-site"><span>Website origin</span><input id="first-site" type="url" inputmode="url" autocomplete="url" placeholder="https://example.com"></label>
+        <div class="permission-note"><strong>What access means</strong><span>The monitor can inspect and control video only on this exact origin. It cannot read other sites unless you enable them separately.</span></div>
+        <div class="actions"><button data-back="2" type="button">Back</button><span class="spacer"></span><button id="skip-site" type="button">Skip for now</button><button id="enable-site" class="primary" type="button">Request access</button></div>
+      </section>
+
+      <section class="step completion" data-step="4" aria-labelledby="ready-title" hidden>
+        <div class="ready-mark" aria-hidden="true">✓</div>
+        <p class="kicker">Setup complete</p>
+        <h2 id="ready-title" tabindex="-1">Your safety net is ready</h2>
+        <p id="setup-summary" class="lede">Open a stream, enable its site from the toolbar, and leave Stream Reviver to monitor conservatively.</p>
+        <ul class="next-steps">
+          <li>The toolbar popup shows current health and the next planned action.</li>
+          <li>A page reload always has a countdown you can cancel.</li>
+          <li>Settings includes per-site rules, diagnostics, and complete local-data deletion.</li>
+        </ul>
+        <div class="actions end"><button id="finish" class="primary" type="button">Open settings</button></div>
+      </section>
+
+      <p id="feedback" role="status" aria-live="polite"></p>
+      <p class="privacy">No stream content is stored or transmitted. Browser fullscreen restrictions still apply.</p>
     </main>
     <script src="welcome.js"></script>
   </body>

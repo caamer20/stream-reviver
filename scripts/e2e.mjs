@@ -6,11 +6,13 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 const chromeBinary = await findChromeBinary();
+const allowSkip = process.argv.includes("--allow-skip");
 const enabledScenarios = new Set((process.env.E2E_SCENARIOS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
 let executedScenarios = 0;
 if (!chromeBinary) {
-  console.log("Chrome for Testing or Chromium was not found; browser E2E tests skipped.");
-  process.exit(0);
+  const message = "Chrome for Testing or Chromium was not found; the browser E2E gate cannot run.";
+  if (allowSkip) { console.log(`${message} Explicit --allow-skip accepted.`); process.exit(0); }
+  throw new Error(message);
 }
 console.log(`Browser E2E using: ${chromeBinary}`);
 
@@ -18,16 +20,6 @@ const temp = await mkdtemp(path.join(tmpdir(), "stream-reviver-e2e-"));
 const extensionDir = path.join(temp, "extension");
 const profileDir = path.join(temp, "profile");
 await cp("dist/chrome", extensionDir, { recursive: true });
-const manifestPath = path.join(extensionDir, "manifest.json");
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-manifest.host_permissions = ["http://127.0.0.1/*"];
-manifest.content_scripts = [{
-  matches: ["http://127.0.0.1/*"], js: ["content.js"], css: ["content.css"],
-  all_frames: true, run_at: "document_start"
-}, {
-  matches: ["http://127.0.0.1/*"], js: ["page-bridge.js"], all_frames: true, run_at: "document_start", world: "MAIN"
-}];
-await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 const server = createServer(async (request, response) => {
   try {
@@ -49,6 +41,19 @@ await new Promise((resolve, reject) => {
 const serverPort = server.address().port;
 const origin = `http://127.0.0.1:${serverPort}`;
 
+// Headless Chrome intentionally leaves extension permission-warning dialogs
+// pending. Seed only the fixture origin as a required test permission; keep the
+// shipped registration architecture intact (no static content scripts and no
+// broad host access). Permission UI grant/denial remains a headed/manual gate.
+const manifestPath = path.join(extensionDir, "manifest.json");
+const productionManifest = JSON.parse(await readFile(manifestPath, "utf8"));
+assert.equal(productionManifest.host_permissions, undefined, "production build must not request persistent broad host access");
+assert.equal(productionManifest.content_scripts, undefined, "production build must use dynamic content-script registration");
+assert.deepEqual(productionManifest.optional_host_permissions, ["<all_urls>"], "production build must declare optional host access");
+productionManifest.host_permissions = [`${origin}/*`];
+await writeFile(manifestPath, `${JSON.stringify(productionManifest, null, 2)}\n`);
+console.log(`Seeded only ${origin} for headless permission testing; dynamic registration remains unchanged.`);
+
 const chrome = spawn(chromeBinary, [
   "--headless=new", "--disable-gpu", "--no-first-run", "--disable-background-networking", "--disable-component-update",
   `--user-data-dir=${profileDir}`, `--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`,
@@ -56,6 +61,15 @@ const chrome = spawn(chromeBinary, [
 ], { stdio: ["ignore", "pipe", "pipe"] });
 let chromeLog = "";
 chrome.stderr.on("data", (chunk) => { chromeLog = `${chromeLog}${chunk}`.slice(-20_000); });
+const hardTimeoutMs = Math.max(30_000, Number(process.env.E2E_TIMEOUT_MS) || 600_000);
+const hardTimeout = setTimeout(async () => {
+  console.error(`Browser E2E exceeded its ${hardTimeoutMs}ms hard deadline.\n${chromeLog}`);
+  if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill("SIGKILL");
+  server.closeAllConnections?.();
+  await rm(temp, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 }).catch(() => undefined);
+  process.exit(124);
+}, hardTimeoutMs);
+hardTimeout.unref();
 
 try {
   const debugPort = await waitForDebugPort(profileDir);
@@ -104,6 +118,17 @@ try {
     assert.ok(events.some((item) => item.event === "status-healthy"), "SPA-injected player should become healthy");
   });
 
+  await scenario(debugPort, "delayed", 30_000, async (events) => {
+    assert.ok(events.some((item) => item.event === "status-no_video_found"), "delayed fixture should initially report no video");
+    assert.ok(events.some((item) => item.event === "status-healthy"), "delayed player injection should eventually become healthy");
+    assert.ok(!events.some((item) => item.event === "recovery-step"), "missing video before delayed injection must not trigger recovery");
+  });
+
+  await scenario(debugPort, "shadow", 10_000, async (events) => {
+    assert.ok(events.some((item) => item.event === "player-selected" && item.detail.includes("Open shadow root test video")), "open shadow-root video should be discovered and selected");
+    assert.ok(events.some((item) => item.event === "status-healthy"), "open shadow-root player should become healthy");
+  });
+
   await scenario(debugPort, "iframe", 8_000, async (events) => {
     assert.ok(events.some((item) => item.event === "status-healthy" && (item.frameId ?? 0) > 0), "iframe player should report healthy from a child frame");
   });
@@ -142,6 +167,15 @@ try {
     assert.ok(!events.some((item) => item.event === "recovery-step"), "audio-only pages must not recover automatically");
   });
 
+  await scenario(debugPort, "stall", 24_000, async (events) => {
+    assert.ok(events.some((item) => item.event === "recovery-step"), "a sustained stalled player should enter recovery");
+    const firstRecovery = events.find((item) => item.event === "recovery-step");
+    const selected = events.find((item) => item.event === "player-selected");
+    if (firstRecovery && selected) {
+      assert.ok(firstRecovery.timestamp - selected.timestamp >= 5_000, "stalled playback must not recover before the configured elapsed timeout");
+    }
+  });
+
   await setTestSettings(debugPort, origin, {
     recoveryStrategy: ["RETRY_BUTTON", "PAGE_RELOAD"],
     errorSelector: ".simulated-stream-error",
@@ -167,14 +201,20 @@ try {
   console.error(chromeLog);
   throw error;
 } finally {
+  clearTimeout(hardTimeout);
   if (chrome.exitCode === null && chrome.signalCode === null) {
     chrome.kill("SIGTERM");
     await Promise.race([
       new Promise((resolve) => chrome.once("exit", resolve)),
       wait(2_000)
     ]);
+    if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill("SIGKILL");
   }
-  await new Promise((resolve) => server.close(resolve));
+  server.closeAllConnections?.();
+  await Promise.race([
+    new Promise((resolve) => server.close(resolve)),
+    wait(2_000)
+  ]);
   await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
@@ -225,12 +265,39 @@ async function popupScenario(debugPort) {
   if (options) await fetch(`http://127.0.0.1:${debugPort}/json/close/${options.id}`);
   const stillOpen = after.find((item) => item.id === popup.id);
   if (stillOpen) await fetch(`http://127.0.0.1:${debugPort}/json/close/${popup.id}`);
+
+  const dashboardPopup = await createTarget(debugPort, `${extensionOrigin}/popup.html?e2e=dashboard`);
+  await setTargetViewport(dashboardPopup, 390, 600);
+  await wait(800);
+  await evaluateTarget(dashboardPopup, `(()=>{document.getElementById('open-dashboard').click();return true})()`);
+  await wait(1_000);
+  const dashboardTargets = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((response) => response.json());
+  const dashboard = dashboardTargets.find((item) => item.type === "page" && item.url.startsWith(`${extensionOrigin}/dashboard.html`));
+  assert.ok(dashboard, "Mission Control should open from the popup");
+  if (dashboard) {
+    await setTargetViewport(dashboard, 1280, 800);
+    const dashboardLayout = await evaluateTarget(dashboard, `(()=>({
+      contentVisible:!document.getElementById('dashboard-content')?.hidden,
+      errorHidden:!!document.getElementById('error-state')?.hidden,
+      summaryCards:document.querySelectorAll('.summary-card').length,
+      protectedSites:document.getElementById('protected-site-count')?.textContent||'',
+      localOnly:document.querySelector('footer')?.textContent?.includes('locally')||false,
+      horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth
+    }))()`);
+    assert.equal(dashboardLayout.contentVisible, true, "Mission Control should render live background state");
+    assert.equal(dashboardLayout.errorHidden, true, "Mission Control should initialize without an error");
+    assert.equal(dashboardLayout.summaryCards, 4, "Mission Control should render all summary cards");
+    assert.equal(dashboardLayout.localOnly, true, "Mission Control should retain its local-data privacy notice");
+    assert.equal(dashboardLayout.horizontalOverflow, false, "Mission Control should fit a desktop viewport without horizontal overflow");
+    await fetch(`http://127.0.0.1:${debugPort}/json/close/${dashboard.id}`);
+  }
   console.log("✓ browser scenario: popup");
 }
 
 async function setTestSettings(debugPort, siteOrigin, siteOverrides) {
-  const settings = {
-    schemaVersion: 3,
+  const globalPatch = {
+    enabled: true,
+    autoRefresh: true,
     pageLoadGraceSeconds: 0,
     checkIntervalSeconds: 1,
     healthyCheckIntervalSeconds: 2,
@@ -242,23 +309,41 @@ async function setTestSettings(debugPort, siteOrigin, siteOverrides) {
     maxAutoRefreshes: 1,
     recoveryBackoffSeconds: [1, 1],
     localHistoryEnabled: true,
-    historyLimit: 500,
-    perSite: { [siteOrigin]: { enabled: true, ...siteOverrides } }
+    historyLimit: 500
   };
   const environment = await evaluateWorker(debugPort, `({href:location.href,chromeType:typeof chrome,storageType:typeof chrome?.storage,chromeKeys:Object.keys(chrome||{})})`);
   if (environment.storageType !== "object") throw new Error(`Extension API unavailable in E2E context: ${JSON.stringify(environment)}`);
-  await evaluateWorker(debugPort, `(async()=>{await chrome.storage.local.set({streamReviverDisclaimerAcknowledged:true});await chrome.storage.sync.set({streamReviverSettings:${JSON.stringify(settings)}});return true})()`);
-  await wait(300);
+  const configured = await evaluateWorker(debugPort, `(async()=>{
+    const send=(message)=>chrome.runtime.sendMessage(message);
+    await send({type:'ACKNOWLEDGE_DISCLAIMER'});
+    const globalResult=await send({type:'UPDATE_GLOBAL_SETTINGS',patch:${JSON.stringify(globalPatch)}});
+    const draft=await send({type:'SET_SITE_OVERRIDES',origin:${JSON.stringify(siteOrigin)},overrides:{enabled:false,...${JSON.stringify(siteOverrides)}},replace:true});
+    const pattern=${JSON.stringify(`${siteOrigin}/*`)};
+    const already=await chrome.permissions.contains({origins:[pattern]});
+    const granted=already||await chrome.permissions.request({origins:[pattern]});
+    const enabled=granted?await send({type:'SET_SITE_ENABLED',origin:${JSON.stringify(siteOrigin)},enabled:true}):{ok:false,error:'permission denied'};
+    return{globalResult,draft,granted,enabled,registrations:(await chrome.scripting.getRegisteredContentScripts()).map(x=>x.id)};
+  })()`, true);
+  assert.equal(configured.globalResult?.ok, true, `global settings should save through the production message path: ${JSON.stringify(configured)}`);
+  assert.equal(configured.draft?.ok, true, `site draft should save before permission: ${JSON.stringify(configured)}`);
+  assert.equal(configured.granted, true, `optional host permission should be granted from a simulated user gesture: ${JSON.stringify(configured)}`);
+  assert.equal(configured.enabled?.ok, true, `site should enable through dynamic registration: ${JSON.stringify(configured)}`);
+  assert.ok(configured.registrations.some((id) => id.startsWith("stream_reviver_")), "production dynamic content-script registration should exist");
+  await wait(500);
 }
 
 async function clearRuntime(debugPort) {
-  await evaluateWorker(debugPort, `(async()=>{await chrome.storage.local.set({streamReviverHistoryV2:[]});await chrome.storage.session.set({streamReviverLoopStateV2:{},streamReviverStatusV2:{}});return true})()`);
+  await evaluateWorker(debugPort, `(async()=>{
+    await chrome.runtime.sendMessage({type:'CLEAR_HISTORY'});
+    await chrome.runtime.sendMessage({type:'CLEAR_DATA',target:'runtime'});
+    return true;
+  })()`);
 }
 async function getHistory(debugPort) {
   return await evaluateWorker(debugPort, `(async()=>{const x=await chrome.storage.local.get('streamReviverHistoryV2');return x.streamReviverHistoryV2||[]})()`);
 }
 
-async function evaluateWorker(debugPort, expression) {
+async function evaluateWorker(debugPort, expression, userGesture = false) {
   const worker = await waitForWorker(debugPort);
   const extensionOrigin = worker.url.match(/^chrome-extension:\/\/[^/]+/)?.[0];
   if (!extensionOrigin) throw new Error(`Unexpected extension worker URL: ${worker.url}`);
@@ -269,7 +354,7 @@ async function evaluateWorker(debugPort, expression) {
   await withTimeout(cdp.open(), 5000, "CDP WebSocket connection timed out");
   try {
     await withTimeout(cdp.send("Runtime.enable"), 5000, "CDP runtime enable timed out");
-    const response = await withTimeout(cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }), 8000, "CDP evaluation timed out");
+    const response = await withTimeout(cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture }), 8000, "CDP evaluation timed out");
     if (response.result?.exceptionDetails) throw new Error(response.result.exceptionDetails.text);
     return response.result?.result?.value;
   } finally { cdp.close(); }
@@ -388,7 +473,7 @@ async function findChromeBinary() {
   } else {
     candidates.push("/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome-for-testing", "/usr/bin/google-chrome");
   }
-  for (const candidate of candidates.reverse()) {
+  for (const candidate of candidates) {
     try { await stat(candidate); return candidate; } catch { /* next */ }
   }
   return null;

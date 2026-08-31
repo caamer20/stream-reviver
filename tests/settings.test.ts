@@ -51,10 +51,18 @@ test("selector strings are trimmed and bounded", () => {
 
 test("v1 settings migrate without losing site configuration", () => {
   const settings = normalizeSettings({ enabled: false, perSite: { "https://example.com": { enabled: true, autoRefresh: false } } });
-  assert.equal(settings.schemaVersion, 3);
+  assert.equal(settings.schemaVersion, 4);
   assert.equal(settings.enabled, false);
+  assert.equal(settings.autoRecover, true);
   assert.equal(settings.perSite["https://example.com"].autoRefresh, false);
   assert.deepEqual(settings.recoveryStrategy, ["WAIT", "PLAY", "LIVE_EDGE", "RETRY_BUTTON", "PAGE_RELOAD"]);
+});
+
+test("v3 settings gain the independent automatic-recovery master switch", () => {
+  const settings = normalizeSettings({ schemaVersion: 3, autoRefresh: false, perSite: {} });
+  assert.equal(settings.schemaVersion, 4);
+  assert.equal(settings.autoRecover, true);
+  assert.equal(settings.autoRefresh, false);
 });
 
 test("v3 reliability settings migrate and clamp safely", () => {

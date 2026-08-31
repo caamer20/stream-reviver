@@ -21,5 +21,5 @@ for (const [key, minimum, maximum] of numericBounds) {
   });
 }
 
-const booleans: Array<keyof GlobalSettings> = ["enabled", "autoRefresh", "autoMaximize", "onlyWhenTabVisible", "waitWhileOffline", "lockPrimaryVideo", "detectFrozenFrames", "restorePlayerPreferences", "useCssMaximizeFallback", "attemptNativeFullscreenClick", "enablePictureInPicture", "showBadge", "showNotifications", "localHistoryEnabled", "enableAdaptiveTuning", "enableAdvancedPlayerBridge", "enableVisualWatchdog", "keepScreenAwake", "protectTabFromDiscard"];
+const booleans: Array<keyof GlobalSettings> = ["enabled", "autoRecover", "autoRefresh", "autoMaximize", "onlyWhenTabVisible", "waitWhileOffline", "lockPrimaryVideo", "detectFrozenFrames", "restorePlayerPreferences", "useCssMaximizeFallback", "attemptNativeFullscreenClick", "enablePictureInPicture", "showBadge", "showNotifications", "localHistoryEnabled", "enableAdaptiveTuning", "enableAdvancedPlayerBridge", "enableVisualWatchdog", "keepScreenAwake", "protectTabFromDiscard"];
 for (const key of booleans) test(`${String(key)} rejects non-boolean values`, () => assert.equal(normalizeSettings({ [key]: "true" })[key], DEFAULT_SETTINGS[key]));

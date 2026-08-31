@@ -1,10 +1,12 @@
 import { apiCall, ext } from "./api";
 import { DEFAULT_SETTINGS } from "./defaults";
+import { attemptTrustedStorageAccess, SettingsStorageRepository, type SettingsStorageArea } from "./settings-storage";
 import { SETTINGS_SCHEMA_VERSION, type EffectiveSettings, type GlobalSettings, type RecoveryAction, type Settings, type SiteSettings } from "./types";
 
-const SETTINGS_KEY = "streamReviverSettings";
-const ACK_KEY = "streamReviverDisclaimerAcknowledged";
+const ACK_KEY = "streamReviverDisclaimerAcknowledgedV1";
+const LEGACY_ACK_KEY = "streamReviverDisclaimerAcknowledged";
 const VISUAL_ACK_KEY = "streamReviverVisualPrivacyAcknowledgedV1";
+let repository: SettingsStorageRepository | null = null;
 
 const numericBounds: Record<string, [number, number]> = {
   checkIntervalSeconds: [1, 60], healthyCheckIntervalSeconds: [2, 120], suspectCheckIntervalSeconds: [0.5, 10],
@@ -16,7 +18,7 @@ const numericBounds: Record<string, [number, number]> = {
 };
 
 const booleanKeys: (keyof GlobalSettings)[] = [
-  "enabled", "autoRefresh", "autoMaximize", "onlyWhenTabVisible", "waitWhileOffline", "lockPrimaryVideo",
+  "enabled", "autoRecover", "autoRefresh", "autoMaximize", "onlyWhenTabVisible", "waitWhileOffline", "lockPrimaryVideo",
   "detectFrozenFrames", "restorePlayerPreferences", "useCssMaximizeFallback", "attemptNativeFullscreenClick",
   "enablePictureInPicture", "showBadge", "showNotifications", "localHistoryEnabled", "enableAdaptiveTuning",
   "enableAdvancedPlayerBridge", "enableVisualWatchdog", "keepScreenAwake", "protectTabFromDiscard"
@@ -78,35 +80,36 @@ export function matchUrlPattern(url: string, pattern: string): boolean {
 }
 
 export async function getSettings(): Promise<Settings> {
-  const stored = await apiCall<Record<string, unknown>>(ext.storage.sync.get, ext.storage.sync, SETTINGS_KEY);
-  const normalized = normalizeSettings(stored[SETTINGS_KEY]);
-  const visualAcknowledged = await getVisualPrivacyAcknowledged();
-  let visualSettingRemoved = false;
-  if (!visualAcknowledged) {
-    if (normalized.enableVisualWatchdog) visualSettingRemoved = true;
-    normalized.enableVisualWatchdog = false;
-    for (const site of Object.values(normalized.perSite)) if (site.enableVisualWatchdog === true) { site.enableVisualWatchdog = false; visualSettingRemoved = true; }
-  }
-  if (!stored[SETTINGS_KEY] || (stored[SETTINGS_KEY] as any)?.schemaVersion !== SETTINGS_SCHEMA_VERSION || visualSettingRemoved) await setSettings(normalized);
-  return normalized;
+  return getRepository().get();
 }
 
 export async function setSettings(settings: Settings): Promise<Settings> {
-  const normalized = normalizeSettings(settings);
-  if (!await getVisualPrivacyAcknowledged()) {
-    normalized.enableVisualWatchdog = false;
-    for (const site of Object.values(normalized.perSite)) if (site.enableVisualWatchdog === true) site.enableVisualWatchdog = false;
-  }
-  await apiCall<void>(ext.storage.sync.set, ext.storage.sync, { [SETTINGS_KEY]: normalized });
-  return normalized;
+  return getRepository().set(settings);
+}
+
+/** Restricts storage.local to extension pages/workers where Chromium supports it. */
+export async function restrictLocalStorageAccess(): Promise<boolean> {
+  const local = ext.storage?.local as chrome.storage.StorageArea & { setAccessLevel?: (options: { accessLevel: "TRUSTED_CONTEXTS" }) => unknown };
+  return attemptTrustedStorageAccess(typeof local?.setAccessLevel === "function"
+    ? () => apiCall<void>(local.setAccessLevel!, local, { accessLevel: "TRUSTED_CONTEXTS" })
+    : undefined);
 }
 
 export async function getDisclaimerAcknowledged(): Promise<boolean> {
-  const stored = await apiCall<Record<string, unknown>>(ext.storage.local.get, ext.storage.local, ACK_KEY);
-  return stored[ACK_KEY] === true;
+  const stored = await apiCall<Record<string, unknown>>(ext.storage.local.get, ext.storage.local, [ACK_KEY, LEGACY_ACK_KEY]);
+  if (stored[ACK_KEY] === true) return true;
+  if (stored[LEGACY_ACK_KEY] !== true) return false;
+  await Promise.all([
+    apiCall<void>(ext.storage.local.set, ext.storage.local, { [ACK_KEY]: true }),
+    apiCall<void>(ext.storage.local.remove, ext.storage.local, LEGACY_ACK_KEY)
+  ]);
+  return true;
 }
 export async function setDisclaimerAcknowledged(value: boolean): Promise<void> {
-  await apiCall<void>(ext.storage.local.set, ext.storage.local, { [ACK_KEY]: value });
+  await Promise.all([
+    apiCall<void>(ext.storage.local.set, ext.storage.local, { [ACK_KEY]: value }),
+    apiCall<void>(ext.storage.local.remove, ext.storage.local, LEGACY_ACK_KEY)
+  ]);
 }
 export async function getVisualPrivacyAcknowledged(): Promise<boolean> {
   const stored = await apiCall<Record<string, unknown>>(ext.storage.local.get, ext.storage.local, VISUAL_ACK_KEY);
@@ -161,9 +164,45 @@ function migrateSettings(source: Record<string, any>): Record<string, any> {
   if ((Number(migrated.schemaVersion) || 1) < 3) {
     for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) if (key !== "perSite" && migrated[key] === undefined) migrated[key] = value;
   }
+  if ((Number(migrated.schemaVersion) || 1) < 4 && migrated.autoRecover === undefined) {
+    // Versions through v3 used autoRefresh as a master switch for every
+    // recovery action. Preserve the product's default automatic-recovery
+    // behavior while separating the page-reload permission going forward.
+    migrated.autoRecover = true;
+  }
   migrated.schemaVersion = SETTINGS_SCHEMA_VERSION;
   return migrated;
 }
 function isRecord(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
+
+function getRepository(): SettingsStorageRepository {
+  repository ??= new SettingsStorageRepository({
+    sync: browserStorageArea(ext.storage.sync),
+    local: browserStorageArea(ext.storage.local),
+    normalize: normalizeSettings,
+    visualPrivacyAcknowledged: getVisualPrivacyAcknowledged
+  });
+  return repository;
+}
+
+function browserStorageArea(area: chrome.storage.StorageArea): SettingsStorageArea {
+  const candidate = area as chrome.storage.StorageArea & {
+    QUOTA_BYTES?: number;
+    QUOTA_BYTES_PER_ITEM?: number;
+    getBytesInUse?: (keys?: string | string[] | null) => unknown;
+  };
+  return {
+    get: (keys) => apiCall<Record<string, unknown>>(area.get, area, keys),
+    set: (items) => apiCall<void>(area.set, area, items),
+    remove: (keys) => apiCall<void>(area.remove, area, keys),
+    getBytesInUse: typeof candidate.getBytesInUse === "function"
+      ? (keys) => apiCall<number>(candidate.getBytesInUse!, area, keys)
+      : undefined,
+    quotaBytes: candidate.QUOTA_BYTES,
+    quotaBytesPerItem: candidate.QUOTA_BYTES_PER_ITEM
+  };
+}
+
+export { SETTINGS_STORAGE_KEYS, SettingsStorageError } from "./settings-storage";

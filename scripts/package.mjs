@@ -1,82 +1,208 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { createDeterministicZip } from "./deterministic-zip.mjs";
+import {
+  assertReleaseRepository,
+  canonicalDigest,
+  collectTrackedSource,
+  createBuildIdentity,
+  expectedReleaseTag,
+  hasArgument,
+  sha256,
+  validateArchivePath
+} from "./release-integrity.mjs";
 
 const root = process.cwd();
-const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const version = packageJson.version;
+const repository = await assertReleaseRepository({
+  root,
+  version,
+  requireTag: hasArgument("--require-tag"),
+  expectedTag: expectedReleaseTag()
+});
+const expectedIdentity = await createBuildIdentity({ root, packageJson, channel: "stable", enforceRelease: true });
+const stableRoot = path.join(root, "dist", "stable");
+const buildProvenance = JSON.parse(await readFile(path.join(stableRoot, "provenance.json"), "utf8"));
+assertBuildIdentity(buildProvenance, expectedIdentity, "stable build provenance");
+
 const artifacts = path.join(root, "artifacts");
 await rm(artifacts, { recursive: true, force: true });
 await mkdir(artifacts, { recursive: true });
 
+const sourceFiles = await collectTrackedSource(root, repository.entries);
 const archiveSpecs = [
-  { name: `stream-reviver-${version}-chrome.zip`, directory: "dist/stable/chrome", prefix: "" },
-  { name: `stream-reviver-${version}-firefox.zip`, directory: "dist/stable/firefox", prefix: "" },
-  { name: `stream-reviver-${version}-source.zip`, directory: ".", prefix: `stream-reviver-${version}/`, source: true }
+  { name: `stream-reviver-${version}-chrome.zip`, entries: await collectOutput(path.join(stableRoot, "chrome")), prefix: "" },
+  { name: `stream-reviver-${version}-firefox.zip`, entries: await collectOutput(path.join(stableRoot, "firefox")), prefix: "" },
+  { name: `stream-reviver-${version}-source.zip`, entries: sourceFiles, prefix: `stream-reviver-${version}/` }
 ];
 const releases = {};
 for (const spec of archiveSpecs) {
-  const entries = await collect(spec.directory, spec.source === true);
-  const bytes = createZip(entries.map((entry) => ({ ...entry, name: `${spec.prefix}${entry.name}` })));
-  const destination = path.join(artifacts, spec.name);
-  await writeFile(destination, bytes);
-  releases[spec.name] = { bytes: bytes.length, sha256: sha256(bytes) };
+  const entries = spec.entries.map((entry) => ({ ...entry, name: `${spec.prefix}${entry.name}` }));
+  const bytes = createDeterministicZip(entries);
+  await writeFile(path.join(artifacts, spec.name), bytes);
+  releases[spec.name] = { bytes: bytes.length, sha256: sha256(bytes), content: canonicalDigest(entries) };
 }
 
-const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
-const components = Object.entries(lock.packages ?? {}).filter(([key]) => key.startsWith("node_modules/")).map(([key, value]) => ({
-  type: "library", name: key.slice("node_modules/".length), version: value.version ?? "unknown", scope: "development",
-  purl: value.version ? `pkg:npm/${encodeURIComponent(key.slice("node_modules/".length))}@${value.version}` : undefined
-})).sort((a, b) => a.name.localeCompare(b.name));
-const sbom = { bomFormat: "CycloneDX", specVersion: "1.5", version: 1, metadata: { component: { type: "application", name: packageJson.name, version } }, components };
+const lock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "utf8"));
+const sbom = createSbom({ packageJson, lock, provenance: buildProvenance, releases });
 const sbomName = `stream-reviver-${version}-sbom.cdx.json`;
 const sbomBytes = Buffer.from(`${JSON.stringify(sbom, null, 2)}\n`);
 await writeFile(path.join(artifacts, sbomName), sbomBytes);
+const releaseTag = expectedReleaseTag() ?? (repository.tags.includes(`v${version}`) ? `v${version}` : null);
 await writeFile(path.join(artifacts, "release-manifest.json"), `${JSON.stringify({
-  version, channel: "stable", archives: releases, sbom: { name: sbomName, bytes: sbomBytes.length, sha256: sha256(sbomBytes) }
+  schemaVersion: 2,
+  version,
+  channel: "stable",
+  commit: repository.commit,
+  tree: repository.tree,
+  sourceDateEpoch: buildProvenance.sourceDateEpoch,
+  generatedAt: buildProvenance.generatedAt,
+  sourceInputSha256: buildProvenance.sourceInputSha256,
+  packageLockSha256: buildProvenance.packageLockSha256,
+  toolchain: buildProvenance.toolchain,
+  releaseTag,
+  archives: releases,
+  sbom: { name: sbomName, bytes: sbomBytes.length, sha256: sha256(sbomBytes) }
 }, null, 2)}\n`);
-console.log(`Created deterministic Chrome, Firefox, and source archives in ${path.relative(root, artifacts)}.`);
+console.log(`Created verified deterministic Chrome, Firefox, and tracked-source archives in ${path.relative(root, artifacts)}.`);
 
-async function collect(directory, sourceArchive) {
+async function collectOutput(directory) {
   const base = path.resolve(directory);
   const files = [];
   async function visit(current) {
     for (const name of (await readdir(current)).sort()) {
       const file = path.join(current, name);
       const relative = path.relative(base, file).replaceAll(path.sep, "/");
-      if (sourceArchive && excluded(relative)) continue;
-      const info = await stat(file);
+      validateArchivePath(relative);
+      const info = await lstat(file);
       if (info.isDirectory()) await visit(file);
-      else if (info.isFile()) files.push({ name: relative, data: await readFile(file) });
+      else {
+        assert.ok(info.isFile() && !info.isSymbolicLink(), `Browser package contains a non-regular file: ${relative}`);
+        files.push({ name: relative, mode: "100644", data: await readFile(file) });
+      }
     }
   }
   await visit(base);
+  assert.ok(files.length > 0, `Browser package directory is empty: ${directory}`);
   return files;
 }
-function excluded(relative) {
-  const first = relative.split("/")[0];
-  return [".git", ".test-dist", "artifacts", "dist", "node_modules", "web-ext-artifacts"].includes(first) || relative.endsWith(".zip") || relative === ".DS_Store";
+
+function assertBuildIdentity(actual, expected, label) {
+  for (const key of [
+    "schemaVersion", "channel", "version", "commit", "tree", "sourceDateEpoch", "generatedAt",
+    "sourceInputSha256", "packageLockSha256"
+  ]) assert.deepEqual(actual[key], expected[key], `${label} ${key} does not match the current clean source`);
+  assert.deepEqual(actual.repository, expected.repository, `${label} repository state does not match the current clean source`);
+  assert.deepEqual(actual.toolchain, expected.toolchain, `${label} toolchain does not match the pinned release toolchain`);
+  assert.ok(actual.targets?.chrome?.sha256 && actual.targets?.firefox?.sha256, `${label} is missing deterministic target hashes`);
 }
-function createZip(entries) {
-  const localParts = []; const centralParts = []; let offset = 0;
-  const time = 0; const date = (40 << 9) | (1 << 5) | 1;
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name); const crc = crc32(entry.data); const size = entry.data.length;
-    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x800, 6);
-    local.writeUInt16LE(0, 8); local.writeUInt16LE(time, 10); local.writeUInt16LE(date, 12); local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(size, 18); local.writeUInt32LE(size, 22); local.writeUInt16LE(name.length, 26); local.writeUInt16LE(0, 28);
-    localParts.push(local, name, entry.data);
-    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0x800, 8); central.writeUInt16LE(0, 10); central.writeUInt16LE(time, 12); central.writeUInt16LE(date, 14);
-    central.writeUInt32LE(crc, 16); central.writeUInt32LE(size, 20); central.writeUInt32LE(size, 24); central.writeUInt16LE(name.length, 28);
-    central.writeUInt16LE(0, 30); central.writeUInt16LE(0, 32); central.writeUInt16LE(0, 34); central.writeUInt16LE(0, 36);
-    central.writeUInt32LE(0, 38); central.writeUInt32LE(offset, 42); centralParts.push(central, name);
-    offset += local.length + name.length + size;
+
+function createSbom({ packageJson, lock, provenance, releases }) {
+  const componentMap = new Map();
+  const dependencyNames = new Map();
+  for (const [lockPath, value] of Object.entries(lock.packages ?? {})) {
+    if (!lockPath.includes("node_modules/") || !value.version) continue;
+    const name = packageNameFromLockPath(lockPath);
+    const ref = npmPurl(name, value.version);
+    if (!componentMap.has(ref)) {
+      const component = {
+        type: "library",
+        "bom-ref": ref,
+        name,
+        version: value.version,
+        scope: "excluded",
+        purl: ref,
+        properties: [{ name: "stream-reviver:dependency-scope", value: "development/build-only" }]
+      };
+      const hash = integrityHash(value.integrity);
+      if (hash) component.hashes = [hash];
+      if (value.license) component.licenses = [{ license: { id: value.license } }];
+      componentMap.set(ref, component);
+    }
+    const refs = dependencyNames.get(name) ?? new Set();
+    refs.add(ref);
+    dependencyNames.set(name, refs);
   }
-  const centralDirectory = Buffer.concat(centralParts); const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(0, 4); end.writeUInt16LE(0, 6); end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(centralDirectory.length, 12); end.writeUInt32LE(offset, 16); end.writeUInt16LE(0, 20);
-  return Buffer.concat([...localParts, centralDirectory, end]);
+  const components = [...componentMap.values()].sort((a, b) => a["bom-ref"].localeCompare(b["bom-ref"]));
+  const dependencies = [{ ref: `pkg:npm/${packageJson.name}@${packageJson.version}`, dependsOn: [] }];
+  for (const component of components) {
+    const lockEntry = findLockEntry(lock, component.name, component.version);
+    const dependsOn = [];
+    for (const dependencyName of Object.keys(lockEntry?.dependencies ?? {}).sort()) {
+      for (const ref of dependencyNames.get(dependencyName) ?? []) dependsOn.push(ref);
+    }
+    dependencies.push({ ref: component["bom-ref"], dependsOn: [...new Set(dependsOn)].sort() });
+  }
+  const sourceArchive = releases[`stream-reviver-${packageJson.version}-source.zip`];
+  const serialSeed = sha256(Buffer.from(`${provenance.commit}\0${packageJson.version}\0${provenance.sourceInputSha256}`));
+  return {
+    bomFormat: "CycloneDX",
+    specVersion: "1.6",
+    serialNumber: deterministicUuidUrn(serialSeed),
+    version: 1,
+    metadata: {
+      timestamp: provenance.generatedAt,
+      tools: {
+        components: [
+          toolComponent("node", provenance.toolchain.node, "Node.js"),
+          toolComponent("npm", provenance.toolchain.npm, "npm"),
+          toolComponent("esbuild", provenance.toolchain.esbuild, "esbuild"),
+          toolComponent("typescript", provenance.toolchain.typescript, "TypeScript")
+        ]
+      },
+      component: {
+        type: "application",
+        "bom-ref": `pkg:npm/${packageJson.name}@${packageJson.version}`,
+        name: packageJson.name,
+        version: packageJson.version,
+        purl: `pkg:npm/${packageJson.name}@${packageJson.version}`,
+        hashes: [{ alg: "SHA-256", content: sourceArchive.sha256 }],
+        licenses: [{ license: { id: packageJson.license ?? "MIT" } }],
+        properties: [
+          { name: "stream-reviver:git-commit", value: provenance.commit },
+          { name: "stream-reviver:git-tree", value: provenance.tree },
+          { name: "stream-reviver:source-input-sha256", value: provenance.sourceInputSha256 },
+          { name: "stream-reviver:package-lock-sha256", value: provenance.packageLockSha256 }
+        ]
+      }
+    },
+    components,
+    dependencies
+  };
 }
-function sha256(bytes) { return createHash("sha256").update(bytes).digest("hex"); }
-function crc32(buffer) { let crc = 0xffffffff; for (const byte of buffer) { crc ^= byte; for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1)); } return (crc ^ 0xffffffff) >>> 0; }
+
+function packageNameFromLockPath(lockPath) {
+  const marker = "node_modules/";
+  return lockPath.slice(lockPath.lastIndexOf(marker) + marker.length);
+}
+
+function npmPurl(name, version) {
+  return `pkg:npm/${encodeURIComponent(name)}@${version}`;
+}
+
+function findLockEntry(lock, name, version) {
+  return Object.entries(lock.packages ?? {}).find(([lockPath, value]) =>
+    lockPath.includes("node_modules/") && packageNameFromLockPath(lockPath) === name && value.version === version
+  )?.[1];
+}
+
+function integrityHash(integrity) {
+  if (typeof integrity !== "string") return null;
+  const match = /^sha512-([A-Za-z0-9+/=]+)$/.exec(integrity);
+  if (!match) return null;
+  return { alg: "SHA-512", content: Buffer.from(match[1], "base64").toString("hex") };
+}
+
+function toolComponent(name, version, displayName) {
+  return { type: "application", name: displayName, version, "bom-ref": `tool:${name}@${version}` };
+}
+
+function deterministicUuidUrn(hex) {
+  const chars = hex.slice(0, 32).split("");
+  chars[12] = "5";
+  chars[16] = ((Number.parseInt(chars[16], 16) & 0x3) | 0x8).toString(16);
+  const value = chars.join("");
+  return `urn:uuid:${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}

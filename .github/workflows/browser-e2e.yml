@@ -11,17 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          node-version: 22
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.2.0
           cache: npm
+      - run: npm install --global npm@11.4.2
       - run: npm ci
+      - run: npm run check:toolchain
       - run: npm run build
       - name: Chromium behavioral scenarios
         env:
           CHROME_BIN: /usr/bin/google-chrome
         run: npm run test:e2e
+      - name: Long-lived browser/profile soak smoke
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+        run: node scripts/soak.mjs --smoke
       - name: Firefox manifest and temporary install
         env:
           FIREFOX_BIN: /usr/bin/firefox

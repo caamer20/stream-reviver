@@ -9,73 +9,140 @@
   <body>
     <header>
       <img class="brand-mark" src="icon-128.png" alt="" aria-hidden="true">
-      <div>
+      <div class="brand-copy">
         <h1 data-i18n="extensionName">Stream Reviver</h1>
-        <p id="site-label">Current site</p>
+        <p id="site-label" data-i18n="popupCurrentSite">Current site</p>
       </div>
     </header>
 
-    <section id="acknowledgement" class="notice" hidden>
-      <h2>Before you begin</h2>
-      <p>This extension can reload pages and change the player layout. Review and accept the disclaimer before enabling monitoring.</p>
-      <button id="acknowledge" class="primary" type="button">I understand and agree</button>
-    </section>
-
-    <main id="controls">
-      <section class="status-card" aria-live="polite">
-        <span id="status-dot" class="status-dot"></span>
-        <div>
-          <strong id="status-title">Loading…</strong>
-          <p id="status-detail">Reading this tab’s status.</p>
-          <div id="confidence-wrap" class="confidence" hidden><span><i id="confidence-bar"></i></span><small id="confidence-label"></small></div>
-          <details class="advanced-status"><summary data-i18n="advancedStatus">Technical details</summary><ul id="evidence" class="evidence"></ul><dl id="status-meta" class="status-meta"><div><dt>Diagnosis</dt><dd id="diagnosis">—</dd></div><div><dt>Stream</dt><dd id="stream-kind">—</dd></div><div><dt>Live lag</dt><dd id="live-lag">—</dd></div><div><dt>Buffer</dt><dd id="buffer-ahead">—</dd></div></dl></details>
-        </div>
+    <main id="popup-main">
+      <section id="acknowledgement" class="notice" aria-labelledby="acknowledgement-title" hidden>
+        <p class="eyebrow" data-i18n="popupSetupEyebrow">SETUP REQUIRED</p>
+        <h2 id="acknowledgement-title" data-i18n="popupBeforeBegin">Before you begin</h2>
+        <p data-i18n="popupAcknowledgementIntro">Stream Reviver can reload pages and change a player’s layout. Review the full disclaimer before enabling monitoring.</p>
+        <details class="disclaimer-details" open>
+          <summary data-i18n="popupFullDisclaimer">Full disclaimer</summary>
+          <p id="disclaimer-copy"></p>
+        </details>
+        <label class="consent-row">
+          <input id="acknowledge-check" type="checkbox">
+          <span data-i18n="popupDisclaimerRead">I have read and understand the disclaimer.</span>
+        </label>
+        <button id="acknowledge" class="primary wide" type="button" disabled data-i18n="popupAcknowledgeContinue">Acknowledge and continue</button>
       </section>
 
-      <section class="switches" aria-label="Stream Reviver controls">
-        <label><span>Extension enabled<small>Global master switch</small></span><input id="global-enabled" type="checkbox" role="switch"></label>
-        <label><span>Monitor this site<small>Requests access only to this origin</small></span><input id="site-enabled" type="checkbox" role="switch"></label>
-        <label><span>Auto-refresh<small>Override for this site</small></span><input id="auto-refresh" type="checkbox" role="switch"></label>
-        <label><span>Auto-maximize<small>Override for this site</small></span><input id="auto-maximize" type="checkbox" role="switch"></label>
-      </section>
+      <div id="controls">
+        <section id="status-card" class="status-card" aria-labelledby="status-title">
+          <div class="status-overline">
+            <span id="protection-chip" class="protection-chip">Checking protection…</span>
+            <span id="freshness" class="freshness">Waiting for status…</span>
+          </div>
+          <div class="status-heading">
+            <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+            <div>
+              <h2 id="status-title">Loading…</h2>
+              <p id="status-detail">Reading this tab’s status.</p>
+            </div>
+          </div>
+          <dl class="status-facts">
+            <div><dt data-i18n="popupCoverage">Coverage</dt><dd id="coverage">RESTRICTED</dd></div>
+            <div><dt data-i18n="popupEvidenceStrength">Evidence strength</dt><dd id="evidence-strength">—</dd></div>
+          </dl>
+          <div class="next-action">
+            <span data-i18n="popupNext">Next</span>
+            <strong id="next-action-text">Waiting for a status update.</strong>
+          </div>
+          <p id="status-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
 
-      <div class="actions primary-actions">
-        <button id="refresh-now" type="button">↻ Refresh now</button>
-        <button id="maximize-now" type="button">⛶ Maximize now</button>
-      </div>
-
-      <details class="popup-section">
-        <summary>More player actions</summary>
-        <div class="actions secondary-actions">
-          <button id="pip-now" type="button">▣ Picture-in-Picture</button>
-          <button id="pin-player" type="button">⌖ Pick primary player</button>
-          <button id="jump-live" type="button">● Jump to live</button>
-        </div>
-      </details>
-
-      <details class="popup-section">
-        <summary>Recovery controls</summary>
-        <section class="recovery-controls">
-          <div class="snooze-row"><select id="snooze-duration" aria-label="Snooze duration"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="-1">Until resumed</option></select><button id="snooze" type="button">Snooze</button><button id="resume" type="button" hidden>Resume</button></div>
-          <div id="countdown-actions" class="mini-actions" hidden><button id="extend-countdown" type="button">+30 seconds</button><button id="cancel-countdown" type="button">Cancel refresh</button></div>
-          <button id="reset-attempts" class="wide" type="button" hidden>Reset recovery attempts and retry</button>
-          <small id="attempt-count"></small>
-          <div class="snooze-row"><select id="event-duration" aria-label="Event mode duration"><option value="60">1 hour</option><option value="120">2 hours</option><option value="180" selected>3 hours</option></select><button id="event-mode" type="button">Start event mode</button><button id="event-stop" type="button" hidden>End event mode</button></div>
+          <details class="advanced-status">
+            <summary data-i18n="advancedStatus">Technical details</summary>
+            <ul id="evidence" class="evidence"></ul>
+            <dl id="status-meta" class="status-meta">
+              <div><dt data-i18n="popupDiagnosis">Diagnosis</dt><dd id="diagnosis">—</dd></div>
+              <div><dt data-i18n="popupStreamType">Stream type</dt><dd id="stream-kind">—</dd></div>
+              <div><dt data-i18n="popupLiveLag">Live lag</dt><dd id="live-lag">—</dd></div>
+              <div><dt data-i18n="popupBuffer">Buffer</dt><dd id="buffer-ahead">—</dd></div>
+            </dl>
+            <div class="limitations-block">
+              <strong data-i18n="popupCoverageNotes">Coverage notes</strong>
+              <ul id="compatibility-limitations" class="evidence"></ul>
+            </div>
+          </details>
         </section>
-      </details>
 
-      <details class="popup-section">
-        <summary>Recent activity</summary>
-        <section class="activity"><div><strong>Latest events</strong><button id="open-diagnostics" class="link" type="button">View all</button></div><ol id="activity-list"></ol><div class="quality-feedback"><button id="mark-correct" type="button">Recovery was correct</button><button id="mark-false-alarm" type="button">False alarm</button></div></section>
-      </details>
-      <p id="feedback" class="feedback" role="alert"></p>
+        <section class="protection-card" aria-labelledby="protection-heading">
+          <div class="section-heading">
+            <div><h2 id="protection-heading" data-i18n="popupProtectionHeading">Protection</h2><p data-i18n="popupProtectionHelp">Choose where Stream Reviver can monitor and how this site differs from your defaults.</p></div>
+          </div>
+          <div class="switches" role="group" aria-label="Protection controls">
+            <label><span data-i18n="popupExtensionEnabled">Extension enabled</span><input id="global-enabled" type="checkbox" role="switch"></label>
+            <label><span><strong data-i18n="popupMonitorSite">Monitor this site</strong><small data-i18n="popupMonitorSiteHelp">Requests access only to this origin</small></span><input id="site-enabled" type="checkbox" role="switch"></label>
+          </div>
+          <div class="override-grid">
+            <label for="auto-recover"><span data-i18n="popupAutoRecover">Automatic recovery</span><select id="auto-recover"><option value="default" data-i18n="popupUseDefault">Use default</option><option value="on" data-i18n="popupOnForSite">On for this site</option><option value="off" data-i18n="popupOffForSite">Off for this site</option></select><small id="auto-recover-effective"></small></label>
+            <label for="auto-refresh"><span data-i18n="popupAutoRefresh">Auto-refresh</span><select id="auto-refresh"><option value="default" data-i18n="popupUseDefault">Use default</option><option value="on" data-i18n="popupOnForSite">On for this site</option><option value="off" data-i18n="popupOffForSite">Off for this site</option></select><small id="auto-refresh-effective"></small></label>
+            <label for="auto-maximize"><span data-i18n="popupAutoMaximize">Auto-maximize</span><select id="auto-maximize"><option value="default" data-i18n="popupUseDefault">Use default</option><option value="on" data-i18n="popupOnForSite">On for this site</option><option value="off" data-i18n="popupOffForSite">Off for this site</option></select><small id="auto-maximize-effective"></small></label>
+          </div>
+        </section>
+
+        <div id="context-actions" class="actions context-actions" aria-label="Recommended actions">
+          <button id="cancel-countdown" class="primary" type="button" hidden data-i18n="popupCancelReload">Cancel reload</button>
+          <button id="extend-countdown" type="button" hidden data-i18n="popupExtendCountdown">Add 30 seconds</button>
+          <button id="resume" class="primary" type="button" hidden data-i18n="popupResumeProtection">Resume protection</button>
+          <button id="reset-attempts" class="primary" type="button" hidden data-i18n="popupResetAttempts">Reset attempts and retry</button>
+          <button id="refresh-now" type="button" hidden><span aria-hidden="true">↻</span> <span data-i18n="popupRefreshNow">Refresh now</span></button>
+          <button id="maximize-now" type="button" hidden><span aria-hidden="true">⛶</span> <span data-i18n="popupMaximizeNow">Maximize now</span></button>
+          <button id="jump-live" type="button" hidden><span aria-hidden="true">●</span> <span data-i18n="popupJumpLive">Jump to live</span></button>
+        </div>
+
+        <details id="player-actions-section" class="popup-section">
+          <summary data-i18n="popupPlayerActions">Player actions</summary>
+          <div class="actions secondary-actions">
+            <button id="pip-now" type="button" hidden><span aria-hidden="true">▣</span> <span data-i18n="popupPictureInPicture">Picture-in-Picture</span></button>
+            <button id="pin-player" type="button" hidden><span aria-hidden="true">⌖</span> <span data-i18n="popupPickPlayer">Pick primary player</span></button>
+          </div>
+        </details>
+
+        <details id="recovery-section" class="popup-section">
+          <summary data-i18n="popupRecoveryControls">Recovery controls</summary>
+          <section class="recovery-controls">
+            <div id="snooze-controls" class="control-row">
+              <label for="snooze-duration" class="sr-only" data-i18n="popupSnoozeDuration">Snooze duration</label>
+              <select id="snooze-duration" aria-label="Snooze duration"><option value="15" data-i18n="popup15Minutes">15 minutes</option><option value="30" selected data-i18n="popup30Minutes">30 minutes</option><option value="60" data-i18n="popup1Hour">1 hour</option><option value="-1" data-i18n="popupUntilResumed">Until resumed</option></select>
+              <button id="snooze" type="button" data-i18n="popupSnooze">Snooze</button>
+            </div>
+            <small id="attempt-count"></small>
+            <div id="event-controls" class="control-row">
+              <label for="event-duration" class="sr-only" data-i18n="popupEventDuration">High-reliability mode duration</label>
+              <select id="event-duration" aria-label="High-reliability mode duration"><option value="60" data-i18n="popup1Hour">1 hour</option><option value="120" data-i18n="popup2Hours">2 hours</option><option value="180" selected data-i18n="popup3Hours">3 hours</option></select>
+              <button id="event-mode" type="button" data-i18n="popupStartHighReliability">Start high-reliability mode</button>
+              <button id="event-stop" type="button" hidden data-i18n="popupEndHighReliability">End high-reliability mode</button>
+            </div>
+          </section>
+        </details>
+
+        <details class="popup-section">
+          <summary data-i18n="popupRecentActivity">Recent activity</summary>
+          <section class="activity">
+            <div><strong data-i18n="popupLatestEvents">Latest events</strong><button id="open-diagnostics" class="link" type="button" data-i18n="popupViewAll">View all</button></div>
+            <ol id="activity-list"></ol>
+            <div id="quality-feedback" class="quality-feedback" hidden>
+              <button id="mark-correct" type="button" data-i18n="popupRecoveryCorrect">Recovery was correct</button>
+              <button id="mark-false-alarm" type="button" data-i18n="popupFalseAlarm">False alarm</button>
+            </div>
+          </section>
+        </details>
+        <p id="feedback" class="feedback" role="alert"></p>
+      </div>
     </main>
 
     <footer>
+      <button id="open-dashboard" class="link" type="button" data-i18n="popupMissionControl">Mission Control</button>
+      <span aria-hidden="true">•</span>
       <button id="open-settings" class="link" type="button" data-i18n="settings">Settings</button>
       <span aria-hidden="true">•</span>
       <button id="open-disclaimer" class="link" type="button" data-i18n="disclaimer">Disclaimer</button>
-      <p>Works only on sites you explicitly enable.</p>
+      <p data-i18n="popupExplicitSites">Works only on sites you explicitly enable.</p>
     </footer>
     <script src="popup.js"></script>
   </body>

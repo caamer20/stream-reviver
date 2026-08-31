@@ -20,7 +20,7 @@ function value(depth = 0): unknown {
 test("deterministic settings fuzzing always produces a bounded safe schema", () => {
   for (let iteration = 0; iteration < 500; iteration += 1) {
     const normalized = normalizeSettings(value());
-    assert.equal(normalized.schemaVersion, 3);
+    assert.equal(normalized.schemaVersion, 4);
     assert.equal(typeof normalized.enabled, "boolean");
     assert.ok(normalized.checkIntervalSeconds >= 1 && normalized.checkIntervalSeconds <= 60);
     assert.ok(Object.getPrototypeOf(normalized.perSite) === Object.prototype);

@@ -1,60 +1,139 @@
 import { apiCall, ext, getOrigin, originPattern, queryActiveTab, sendMessage } from "../shared/api";
-import { localizeDocument } from "../shared/i18n";
-import type { PopupState, RuntimeMessage, SiteSettings } from "../shared/types";
+import { DISCLAIMER } from "../shared/defaults";
+import { localizeDocument, message } from "../shared/i18n";
+import {
+  getPopupPresentation,
+  getSiteOverrideMode,
+  withSiteOverride,
+  type PopupCopy,
+  type PopupPresentation,
+  type SiteOverrideMode
+} from "../shared/popup-presentation";
+import type { FailureKind, HistoryEvent, PopupState, RuntimeMessage } from "../shared/types";
 
 localizeDocument();
+try { document.documentElement.lang = ext.i18n?.getUILanguage?.() || "en"; } catch { /* English fallback remains declared */ }
 
 const el = {
-  acknowledgement: byId<HTMLElement>("acknowledgement"), acknowledge: byId<HTMLButtonElement>("acknowledge"), controls: byId<HTMLElement>("controls"),
-  siteLabel: byId("site-label"), statusDot: byId("status-dot"), statusTitle: byId("status-title"), statusDetail: byId("status-detail"),
-  confidenceWrap: byId("confidence-wrap"), confidenceBar: byId<HTMLElement>("confidence-bar"), confidenceLabel: byId("confidence-label"), evidence: byId<HTMLUListElement>("evidence"),
-  diagnosis: byId("diagnosis"), streamKind: byId("stream-kind"), liveLag: byId("live-lag"), bufferAhead: byId("buffer-ahead"),
-  globalEnabled: byId<HTMLInputElement>("global-enabled"), siteEnabled: byId<HTMLInputElement>("site-enabled"),
-  autoRefresh: byId<HTMLInputElement>("auto-refresh"), autoMaximize: byId<HTMLInputElement>("auto-maximize"),
-  refreshNow: byId<HTMLButtonElement>("refresh-now"), maximizeNow: byId<HTMLButtonElement>("maximize-now"), pipNow: byId<HTMLButtonElement>("pip-now"), pinPlayer: byId<HTMLButtonElement>("pin-player"),
-  jumpLive: byId<HTMLButtonElement>("jump-live"), eventDuration: byId<HTMLSelectElement>("event-duration"), eventMode: byId<HTMLButtonElement>("event-mode"), eventStop: byId<HTMLButtonElement>("event-stop"),
-  snoozeDuration: byId<HTMLSelectElement>("snooze-duration"), snooze: byId<HTMLButtonElement>("snooze"), resume: byId<HTMLButtonElement>("resume"),
-  countdownActions: byId("countdown-actions"), extendCountdown: byId<HTMLButtonElement>("extend-countdown"), cancelCountdown: byId<HTMLButtonElement>("cancel-countdown"),
-  resetAttempts: byId<HTMLButtonElement>("reset-attempts"), attemptCount: byId("attempt-count"), activityList: byId<HTMLOListElement>("activity-list"),
-  feedback: byId("feedback"), openSettings: byId<HTMLButtonElement>("open-settings"), openDisclaimer: byId<HTMLButtonElement>("open-disclaimer"), openDiagnostics: byId<HTMLButtonElement>("open-diagnostics"),
-  markCorrect: byId<HTMLButtonElement>("mark-correct"), markFalseAlarm: byId<HTMLButtonElement>("mark-false-alarm")
+  acknowledgement: byId<HTMLElement>("acknowledgement"),
+  acknowledgeCheck: byId<HTMLInputElement>("acknowledge-check"),
+  acknowledge: byId<HTMLButtonElement>("acknowledge"),
+  disclaimerCopy: byId("disclaimer-copy"),
+  controls: byId<HTMLElement>("controls"),
+  siteLabel: byId("site-label"),
+  statusCard: byId("status-card"),
+  protectionChip: byId("protection-chip"),
+  freshness: byId("freshness"),
+  statusDot: byId("status-dot"),
+  statusTitle: byId("status-title"),
+  statusDetail: byId("status-detail"),
+  coverage: byId("coverage"),
+  evidenceStrength: byId("evidence-strength"),
+  nextActionText: byId("next-action-text"),
+  statusAnnouncer: byId("status-announcer"),
+  evidence: byId<HTMLUListElement>("evidence"),
+  compatibilityLimitations: byId<HTMLUListElement>("compatibility-limitations"),
+  diagnosis: byId("diagnosis"),
+  streamKind: byId("stream-kind"),
+  liveLag: byId("live-lag"),
+  bufferAhead: byId("buffer-ahead"),
+  globalEnabled: byId<HTMLInputElement>("global-enabled"),
+  siteEnabled: byId<HTMLInputElement>("site-enabled"),
+  autoRecover: byId<HTMLSelectElement>("auto-recover"),
+  autoRecoverEffective: byId("auto-recover-effective"),
+  autoRefresh: byId<HTMLSelectElement>("auto-refresh"),
+  autoRefreshEffective: byId("auto-refresh-effective"),
+  autoMaximize: byId<HTMLSelectElement>("auto-maximize"),
+  autoMaximizeEffective: byId("auto-maximize-effective"),
+  contextActions: byId("context-actions"),
+  refreshNow: byId<HTMLButtonElement>("refresh-now"),
+  maximizeNow: byId<HTMLButtonElement>("maximize-now"),
+  pipNow: byId<HTMLButtonElement>("pip-now"),
+  pinPlayer: byId<HTMLButtonElement>("pin-player"),
+  jumpLive: byId<HTMLButtonElement>("jump-live"),
+  playerActionsSection: byId<HTMLDetailsElement>("player-actions-section"),
+  recoverySection: byId<HTMLDetailsElement>("recovery-section"),
+  eventControls: byId("event-controls"),
+  eventDuration: byId<HTMLSelectElement>("event-duration"),
+  eventMode: byId<HTMLButtonElement>("event-mode"),
+  eventStop: byId<HTMLButtonElement>("event-stop"),
+  snoozeControls: byId("snooze-controls"),
+  snoozeDuration: byId<HTMLSelectElement>("snooze-duration"),
+  snooze: byId<HTMLButtonElement>("snooze"),
+  resume: byId<HTMLButtonElement>("resume"),
+  extendCountdown: byId<HTMLButtonElement>("extend-countdown"),
+  cancelCountdown: byId<HTMLButtonElement>("cancel-countdown"),
+  resetAttempts: byId<HTMLButtonElement>("reset-attempts"),
+  attemptCount: byId("attempt-count"),
+  activityList: byId<HTMLOListElement>("activity-list"),
+  qualityFeedback: byId("quality-feedback"),
+  feedback: byId("feedback"),
+  openDashboard: byId<HTMLButtonElement>("open-dashboard"),
+  openSettings: byId<HTMLButtonElement>("open-settings"),
+  openDisclaimer: byId<HTMLButtonElement>("open-disclaimer"),
+  openDiagnostics: byId<HTMLButtonElement>("open-diagnostics"),
+  markCorrect: byId<HTMLButtonElement>("mark-correct"),
+  markFalseAlarm: byId<HTMLButtonElement>("mark-false-alarm")
 };
 
 let tabId: number | undefined;
 let origin: string | null = null;
 let state: PopupState | null = null;
 let mutating = false;
+let lastAnnouncementKey = "";
+
 void initialize();
 
 async function initialize(): Promise<void> {
+  el.disclaimerCopy.textContent = DISCLAIMER;
+  localizeControlLabels();
   bindEvents();
   try {
     const tab = await queryActiveTab();
     tabId = tab?.id;
     origin = getOrigin(tab?.url);
-    el.siteLabel.textContent = origin ? new URL(origin === "file://" ? "file:///" : origin).host || "Local file" : "Restricted browser page";
+    el.siteLabel.textContent = origin
+      ? new URL(origin === "file://" ? "file:///" : origin).host || message("popupLocalFile", "Local file")
+      : message("popupRestrictedPage", "Restricted browser page");
     await refreshState();
   } catch (error) {
-    el.siteLabel.textContent = "Firefox tab unavailable";
-    el.feedback.textContent = `Extension startup error: ${error instanceof Error ? error.message : String(error)}`;
+    el.siteLabel.textContent = message("popupCurrentTabUnavailable", "Current tab unavailable");
+    el.feedback.textContent = `${message("popupStartupError", "Extension startup error")}: ${error instanceof Error ? error.message : String(error)}`;
   }
-  window.setInterval(() => { if (!mutating) void refreshState(false); }, 1000);
+  window.setInterval(() => { if (!mutating) void refreshState(false); }, 2_000);
+  window.setInterval(renderTimeSensitiveState, 1_000);
+}
+
+function localizeControlLabels(): void {
+  document.querySelector<HTMLElement>(".switches")?.setAttribute("aria-label", message("popupProtectionControls", "Protection controls"));
+  el.contextActions.setAttribute("aria-label", message("popupRecommendedActions", "Recommended actions"));
+  el.snoozeDuration.setAttribute("aria-label", message("popupSnoozeDuration", "Snooze duration"));
+  el.eventDuration.setAttribute("aria-label", message("popupEventDuration", "High-reliability mode duration"));
 }
 
 function bindEvents(): void {
-  el.acknowledge.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "ACKNOWLEDGE_DISCLAIMER" } satisfies RuntimeMessage); }));
-  el.globalEnabled.addEventListener("change", () => runMutation(async () => { await sendMessage({ type: "UPDATE_GLOBAL_SETTINGS", patch: { enabled: el.globalEnabled.checked } } satisfies RuntimeMessage); }));
+  el.acknowledgeCheck.addEventListener("change", () => { el.acknowledge.disabled = !el.acknowledgeCheck.checked; });
+  el.acknowledge.addEventListener("click", () => runMutation(async () => {
+    if (!el.acknowledgeCheck.checked) throw new Error(message("popupReadDisclaimerFirst", "Read and confirm the disclaimer first."));
+    await sendMessage({ type: "ACKNOWLEDGE_DISCLAIMER" } satisfies RuntimeMessage);
+  }));
+  el.globalEnabled.addEventListener("change", () => runMutation(async () => {
+    await sendMessage({ type: "UPDATE_GLOBAL_SETTINGS", patch: { enabled: el.globalEnabled.checked } } satisfies RuntimeMessage);
+  }));
   el.siteEnabled.addEventListener("change", () => runMutation(async () => {
-    if (!origin) throw new Error("This browser page cannot be monitored.");
+    if (!origin) throw new Error(message("popupCannotMonitorPage", "This browser page cannot be monitored."));
     if (el.siteEnabled.checked) {
       const pattern = originPattern(origin);
-      if (!pattern || !await apiCall<boolean>(ext.permissions.request, ext.permissions, { origins: [pattern] })) throw new Error("Site access was not granted.");
+      if (!pattern || !await apiCall<boolean>(ext.permissions.request, ext.permissions, { origins: [pattern] })) {
+        throw new Error(message("popupAccessNotGranted", "Site access was not granted. You can try again at any time."));
+      }
     }
     const response = await sendMessage<{ ok: boolean; error?: string }>({ type: "SET_SITE_ENABLED", origin, enabled: el.siteEnabled.checked, tabId } satisfies RuntimeMessage);
-    if (!response.ok) throw new Error(response.error || "Could not update site access.");
+    if (!response.ok) throw new Error(response.error || message("popupAccessUpdateFailed", "Could not update site access."));
   }));
-  el.autoRefresh.addEventListener("change", () => setSiteOverrides({ autoRefresh: el.autoRefresh.checked }));
-  el.autoMaximize.addEventListener("change", () => setSiteOverrides({ autoMaximize: el.autoMaximize.checked }));
+  el.autoRecover.addEventListener("change", () => void setSiteOverride("autoRecover", el.autoRecover.value as SiteOverrideMode));
+  el.autoRefresh.addEventListener("change", () => void setSiteOverride("autoRefresh", el.autoRefresh.value as SiteOverrideMode));
+  el.autoMaximize.addEventListener("change", () => void setSiteOverride("autoMaximize", el.autoMaximize.value as SiteOverrideMode));
   el.refreshNow.addEventListener("click", () => runAndClose({ type: "MANUAL_REFRESH", tabId: requireTab(), origin: requireOrigin() }));
   el.maximizeNow.addEventListener("click", () => runAndClose({ type: "MANUAL_MAXIMIZE", tabId: requireTab() }));
   el.pipNow.addEventListener("click", () => runAndClose({ type: "MANUAL_PICTURE_IN_PICTURE", tabId: requireTab() }));
@@ -63,16 +142,38 @@ function bindEvents(): void {
   el.eventMode.addEventListener("click", () => runMutation(async () => {
     await sendMessage({ type: "SET_EVENT_MODE", tabId: requireTab(), until: Date.now() + Number(el.eventDuration.value) * 60_000 } satisfies RuntimeMessage);
   }));
-  el.eventStop.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "SET_EVENT_MODE", tabId: requireTab(), until: null } satisfies RuntimeMessage); }));
+  el.eventStop.addEventListener("click", () => runMutation(async () => {
+    await sendMessage({ type: "SET_EVENT_MODE", tabId: requireTab(), until: null } satisfies RuntimeMessage);
+  }));
   el.snooze.addEventListener("click", () => runMutation(async () => {
     const minutes = Number(el.snoozeDuration.value);
     const until = minutes === -1 ? -1 : Date.now() + minutes * 60_000;
-    await sendMessage({ type: "SNOOZE_TAB", tabId: requireTab(), until } satisfies RuntimeMessage);
+    const response = await sendMessage<{ ok: boolean; error?: string }>({ type: "SNOOZE_TAB", tabId: requireTab(), until } satisfies RuntimeMessage);
+    if (!response.ok) throw new Error(response.error || "Monitoring could not be snoozed.");
   }));
-  el.resume.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "SNOOZE_TAB", tabId: requireTab(), until: null } satisfies RuntimeMessage); }));
-  el.extendCountdown.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "EXTEND_COUNTDOWN", tabId: requireTab(), seconds: 30 } satisfies RuntimeMessage); }));
-  el.cancelCountdown.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "CANCEL_TAB_COUNTDOWN", tabId: requireTab() } satisfies RuntimeMessage); }));
-  el.resetAttempts.addEventListener("click", () => runMutation(async () => { await sendMessage({ type: "RESET_TAB_ATTEMPTS", tabId: requireTab() } satisfies RuntimeMessage); }));
+  el.resume.addEventListener("click", () => runMutation(async () => {
+    const response = await sendMessage<{ ok: boolean; error?: string }>({ type: "SNOOZE_TAB", tabId: requireTab(), until: null } satisfies RuntimeMessage);
+    if (!response.ok) throw new Error(response.error || "Monitoring could not be resumed.");
+  }));
+  el.extendCountdown.addEventListener("click", () => runMutation(async () => {
+    const response = await sendMessage<{ ok: boolean; error?: string }>({
+      type: "EXTEND_COUNTDOWN", tabId: requireTab(), seconds: 30
+    } satisfies RuntimeMessage);
+    if (!response.ok) throw new Error(response.error || "The countdown could not be extended.");
+  }));
+  el.cancelCountdown.addEventListener("click", () => runMutation(async () => {
+    const response = await sendMessage<{ ok: boolean; canceled?: boolean; error?: string }>({
+      type: "CANCEL_TAB_COUNTDOWN", tabId: requireTab()
+    } satisfies RuntimeMessage);
+    if (!response.ok || !response.canceled) {
+      throw new Error(response.error || "The reload was no longer pending and could not be canceled.");
+    }
+  }));
+  el.resetAttempts.addEventListener("click", () => runMutation(async () => {
+    const response = await sendMessage<{ ok: boolean; error?: string }>({ type: "RESET_TAB_ATTEMPTS", tabId: requireTab() } satisfies RuntimeMessage);
+    if (!response.ok) throw new Error(response.error || "Recovery attempts could not be reset.");
+  }));
+  el.openDashboard.addEventListener("click", () => void openDashboard());
   el.openSettings.addEventListener("click", () => void openOptions(""));
   el.openDisclaimer.addEventListener("click", () => void openOptions("#disclaimer"));
   el.openDiagnostics.addEventListener("click", () => void openOptions("#diagnostics"));
@@ -82,33 +183,85 @@ function bindEvents(): void {
 
 function markOutcome(correct: boolean): void {
   void runMutation(async () => {
-    await sendMessage({ type: "RECORD_USER_FEEDBACK", origin: requireOrigin(), correct, failureKind: state?.status.diagnosis.kind ?? "UNKNOWN_FAILURE" } satisfies RuntimeMessage);
-    await sendMessage({ type: "LOG_HISTORY", entry: { event: correct ? "user-marked-correct" : "user-marked-false-alarm", detail: correct ? "User marked the latest recovery as correct" : "User marked the latest detection as a false alarm", level: correct ? "success" : "warning", url: state?.status.pageUrl ?? origin ?? "", metadata: { state: state?.status.state, confidence: state?.status.confidence, failureKind: state?.status.diagnosis.kind } } } satisfies RuntimeMessage);
+    const context = feedbackContext(state);
+    await sendMessage({ type: "RECORD_USER_FEEDBACK", origin: requireOrigin(), correct, failureKind: context.failureKind } satisfies RuntimeMessage);
+    await sendMessage({
+      type: "LOG_HISTORY",
+      entry: {
+        event: correct ? "user-marked-correct" : "user-marked-false-alarm",
+        detail: correct ? "User marked the latest recovery as correct" : "User marked the latest detection as a false alarm",
+        level: correct ? "success" : "warning",
+        url: state?.status.pageUrl ?? origin ?? "",
+        metadata: {
+          state: state?.status.state,
+          confidence: state?.status.confidence,
+          failureKind: context.failureKind,
+          recoveryCycleId: context.recoveryCycleId,
+          recoveryAction: context.action
+        }
+      }
+    } satisfies RuntimeMessage);
   });
 }
 
-function setSiteOverrides(overrides: SiteSettings): void {
-  void runMutation(async () => { await sendMessage({ type: "SET_SITE_OVERRIDES", origin: requireOrigin(), overrides } satisfies RuntimeMessage); });
+function feedbackContext(current: PopupState | null): { failureKind: FailureKind; recoveryCycleId: string | null; action: string | null } {
+  for (const item of current?.recentHistory ?? []) {
+    const rawKind = item.metadata?.failureKind;
+    if (typeof rawKind !== "string" || rawKind === "NONE" || !failureKinds.has(rawKind as FailureKind)) continue;
+    return {
+      failureKind: rawKind as FailureKind,
+      recoveryCycleId: typeof item.metadata?.recoveryCycleId === "string" ? item.metadata.recoveryCycleId : null,
+      action: typeof item.metadata?.action === "string" ? item.metadata.action : null
+    };
+  }
+  const currentKind = current?.status.diagnosis.kind;
+  return {
+    failureKind: currentKind && currentKind !== "NONE" ? currentKind : "UNKNOWN_FAILURE",
+    recoveryCycleId: current?.status.recoveryCycleId ?? null,
+    action: current?.status.recoveryAction ?? null
+  };
 }
 
-function runAndClose(message: RuntimeMessage): void {
-  void runMutation(async () => { await sendMessage(message); window.close(); });
+const failureKinds = new Set<FailureKind>([
+  "NONE", "STARTUP_DELAY", "USER_PAUSED", "AUTOPLAY_BLOCKED", "NETWORK_OFFLINE", "NETWORK_STARVATION",
+  "BUFFER_UNDERRUN", "LIVE_EDGE_DRIFT", "DECODE_FREEZE", "RENDER_FREEZE", "MEDIA_SOURCE_ERROR",
+  "NO_USABLE_SOURCE", "LIVE_STREAM_ENDED", "PLAYER_REPLACED", "PLAYER_CONTROL_ERROR", "WEBRTC_NETWORK_FAILURE",
+  "ACCESS_INTERRUPTION", "TAB_SUSPENDED", "BROWSER_RESUMED", "UNKNOWN_FAILURE"
+]);
+
+async function setSiteOverride(key: "autoRecover" | "autoRefresh" | "autoMaximize", mode: SiteOverrideMode): Promise<void> {
+  await runMutation(async () => {
+    if (!state) throw new Error(message("popupStateUnavailable", "Current settings are unavailable."));
+    const site = withSiteOverride(state.settings.perSite[requireOrigin()], key, mode);
+    await sendMessage({ type: "SET_SITE_OVERRIDES", origin: requireOrigin(), overrides: site, replace: true } satisfies RuntimeMessage);
+  });
+}
+
+function runAndClose(runtimeMessage: RuntimeMessage): void {
+  void runMutation(async () => { await sendMessage(runtimeMessage); window.close(); });
 }
 
 async function runMutation(action: () => Promise<void>): Promise<void> {
   if (mutating) return;
   mutating = true;
+  el.controls.setAttribute("aria-busy", "true");
   el.feedback.textContent = "";
   try { await action(); }
   catch (error) { el.feedback.textContent = error instanceof Error ? error.message : String(error); }
-  finally { await refreshState(); mutating = false; }
+  finally {
+    await refreshState();
+    el.controls.removeAttribute("aria-busy");
+    mutating = false;
+  }
 }
 
 async function refreshState(showError = true): Promise<void> {
   try {
     state = await sendMessage<PopupState>({ type: "GET_POPUP_STATE", tabId, origin: origin ?? undefined } satisfies RuntimeMessage);
     render();
-  } catch (error) { if (showError) el.feedback.textContent = `Extension background unavailable: ${String(error)}`; }
+  } catch (error) {
+    if (showError) el.feedback.textContent = `${message("popupBackgroundUnavailable", "Extension background unavailable")}: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 function render(): void {
@@ -116,56 +269,172 @@ function render(): void {
   el.acknowledgement.hidden = state.acknowledged;
   el.controls.hidden = !state.acknowledged;
   el.controls.toggleAttribute("inert", !state.acknowledged);
+  if (!state.acknowledged) return;
+
   el.globalEnabled.checked = state.settings.enabled;
   el.siteEnabled.checked = state.effective?.siteEnabled ?? false;
-  el.autoRefresh.checked = state.effective?.autoRefresh ?? state.settings.autoRefresh;
-  el.autoMaximize.checked = state.effective?.autoMaximize ?? state.settings.autoMaximize;
-  const usable = state.acknowledged && state.supportedPage && state.settings.enabled;
-  el.siteEnabled.disabled = !usable;
-  for (const input of [el.autoRefresh, el.autoMaximize]) input.disabled = !usable || !state.effective?.siteEnabled;
-  for (const button of [el.refreshNow, el.maximizeNow, el.pipNow, el.pinPlayer, el.snooze, el.jumpLive, el.eventMode]) button.disabled = !usable || !state.effective?.siteEnabled;
+  const siteSettings = origin ? state.settings.perSite[origin] : undefined;
+  const recoverMode = getSiteOverrideMode(siteSettings, "autoRecover");
+  const refreshMode = getSiteOverrideMode(siteSettings, "autoRefresh");
+  const maximizeMode = getSiteOverrideMode(siteSettings, "autoMaximize");
+  el.autoRecover.value = recoverMode;
+  el.autoRefresh.value = refreshMode;
+  el.autoMaximize.value = maximizeMode;
+  renderEffectiveSetting(el.autoRecoverEffective, recoverMode, state.settings.autoRecover);
+  renderEffectiveSetting(el.autoRefreshEffective, refreshMode, state.settings.autoRefresh);
+  renderEffectiveSetting(el.autoMaximizeEffective, maximizeMode, state.settings.autoMaximize);
 
-  const labels: Record<string, string> = {
-    DISABLED: "Disabled", SITE_NOT_ENABLED: "Site not enabled", URL_EXCLUDED: "URL excluded", SNOOZED: "Monitoring snoozed", OFFLINE: "Offline",
-    NO_VIDEO_FOUND: "No video detected", LIMITED_VISIBILITY: "Limited player visibility", MONITORING: "Monitoring", HEALTHY: "Stream healthy", SUSPECTED_DOWN: "Stream may be down",
-    RECOVERING: "Recovery in progress", COUNTDOWN: "Refresh scheduled", REFRESHING: "Refreshing", PAUSED_TOO_MANY_REFRESHES: "Recovery paused",
-    MAXIMIZE_BLOCKED: "Maximize needs a click", ERROR: "Extension error"
-  };
-  const statusClass = state.status.state === "HEALTHY" ? "healthy"
-    : ["SUSPECTED_DOWN", "COUNTDOWN", "MAXIMIZE_BLOCKED", "RECOVERING", "OFFLINE"].includes(state.status.state) ? "warning"
-      : ["ERROR", "PAUSED_TOO_MANY_REFRESHES"].includes(state.status.state) ? "error"
-        : state.status.state === "MONITORING" ? "monitoring" : "";
-  el.statusDot.className = `status-dot ${statusClass}`;
-  el.statusTitle.textContent = labels[state.status.state] ?? state.status.state;
-  el.statusDetail.textContent = state.status.detail;
-  el.confidenceWrap.hidden = state.status.confidence === 0;
-  el.confidenceBar.style.width = `${state.status.confidence}%`;
-  el.confidenceLabel.textContent = `${state.status.confidence}% failure confidence`;
-  el.evidence.replaceChildren(...state.status.evidence.slice(0, 3).map((item) => {
-    const li = document.createElement("li"); li.textContent = item.detail; return li;
-  }));
-  el.diagnosis.textContent = state.status.diagnosis.kind.replaceAll("_", " ").toLowerCase();
-  el.streamKind.textContent = state.status.streamKind.replaceAll("_", " ").toLowerCase();
-  el.liveLag.textContent = state.status.liveEdgeLagSeconds === null ? "—" : `${Math.round(state.status.liveEdgeLagSeconds)}s`;
-  el.bufferAhead.textContent = state.status.bufferAheadSeconds === null ? "—" : `${state.status.bufferAheadSeconds.toFixed(1)}s`;
-  el.jumpLive.disabled = el.jumpLive.disabled || state.status.liveEdgeLagSeconds === null || state.status.streamKind === "VOD";
+  const canConfigureSite = state.supportedPage && state.settings.enabled;
+  el.siteEnabled.disabled = !canConfigureSite;
+  el.autoRecover.disabled = !canConfigureSite || !state.effective?.siteEnabled;
+  el.autoRefresh.disabled = !canConfigureSite || !state.effective?.siteEnabled;
+  el.autoMaximize.disabled = !canConfigureSite || !state.effective?.siteEnabled;
 
-  const snoozed = state.snoozedUntil === -1 || (state.snoozedUntil !== null && state.snoozedUntil > Date.now());
-  el.resume.hidden = !snoozed;
-  el.snooze.hidden = snoozed;
-  el.snoozeDuration.hidden = snoozed;
-  el.countdownActions.hidden = state.status.state !== "COUNTDOWN";
-  el.resetAttempts.hidden = state.status.state !== "PAUSED_TOO_MANY_REFRESHES";
-  el.attemptCount.textContent = state.refreshAttempts ? `${state.refreshAttempts} automatic page reload attempt${state.refreshAttempts === 1 ? "" : "s"} in the current window` : "No recent automatic page reloads";
+  const presentation = getPopupPresentation(state);
+  renderPresentation(presentation);
+  renderTechnicalDetails();
+  renderActions(presentation);
+  renderActivity();
+}
+
+function renderTimeSensitiveState(): void {
+  if (!state || !state.acknowledged || mutating) return;
+  const presentation = getPopupPresentation(state);
+  renderPresentation(presentation);
+  renderActions(presentation);
+}
+
+function renderPresentation(presentation: PopupPresentation): void {
+  const protection = resolveCopy(presentation.protection);
+  const headline = resolveCopy(presentation.headline);
+  const detail = resolveCopy(presentation.detail);
+  const nextAction = resolveCopy(presentation.nextAction);
+  setText(el.protectionChip, protection);
+  setText(el.freshness, resolveCopy(presentation.freshness));
+  setText(el.statusTitle, headline);
+  setText(el.statusDetail, detail);
+  setText(el.coverage, resolveCopy(presentation.coverage));
+  setText(el.evidenceStrength, presentation.evidenceStrength);
+  setText(el.nextActionText, nextAction);
+  el.statusDot.className = `status-dot ${presentation.tone}`;
+  el.protectionChip.className = `protection-chip ${presentation.activeProtection ? presentation.tone : ""}`;
+  el.statusCard.toggleAttribute("data-stale", presentation.stale);
+  if (presentation.announcementKey !== lastAnnouncementKey) {
+    lastAnnouncementKey = presentation.announcementKey;
+    el.statusAnnouncer.textContent = `${protection}. ${headline}. ${detail} ${message("popupNext", "Next")}: ${nextAction}`;
+  }
+}
+
+function renderTechnicalDetails(): void {
+  if (!state) return;
+  const status = state.status;
+  replaceTextList(el.evidence, status.evidence.slice(0, 3).map((item) => item.detail));
+  replaceTextList(
+    el.compatibilityLimitations,
+    status.compatibility.limitations.length
+      ? status.compatibility.limitations.slice(0, 4)
+      : [message("popupNoCoverageLimitations", "No coverage limitations reported.")]
+  );
+  setText(el.diagnosis, humanize(status.diagnosis.kind));
+  setText(el.streamKind, humanize(status.streamKind));
+  setText(el.liveLag, status.liveEdgeLagSeconds === null ? "—" : `${Math.round(status.liveEdgeLagSeconds)}s`);
+  setText(el.bufferAhead, status.bufferAheadSeconds === null ? "—" : `${status.bufferAheadSeconds.toFixed(1)}s`);
+}
+
+function renderActions(presentation: PopupPresentation): void {
+  if (!state) return;
+  const actions = presentation.actions;
+  setVisible(el.refreshNow, actions.refresh);
+  setVisible(el.maximizeNow, actions.maximize);
+  setVisible(el.jumpLive, actions.jumpLive);
+  setVisible(el.cancelCountdown, actions.cancelCountdown);
+  setVisible(el.extendCountdown, actions.extendCountdown);
+  setVisible(el.resetAttempts, actions.resetAttempts);
+  setVisible(el.resume, actions.resume);
+  el.contextActions.hidden = ![actions.refresh, actions.maximize, actions.jumpLive, actions.cancelCountdown, actions.extendCountdown, actions.resetAttempts, actions.resume].some(Boolean);
+
+  setVisible(el.pipNow, actions.pictureInPicture);
+  setVisible(el.pinPlayer, actions.pickPlayer);
+  el.playerActionsSection.hidden = !actions.pictureInPicture && !actions.pickPlayer;
+
+  el.snoozeControls.hidden = !actions.snooze;
+  el.snooze.disabled = !actions.snooze;
   const eventActive = state.eventModeUntil !== null && state.eventModeUntil > Date.now();
-  el.eventMode.hidden = eventActive; el.eventDuration.hidden = eventActive; el.eventStop.hidden = !eventActive;
-  el.activityList.replaceChildren(...state.recentHistory.slice(0, 4).map((item) => {
+  el.eventControls.hidden = !actions.eventMode && !eventActive;
+  el.eventMode.hidden = !actions.eventMode || eventActive;
+  el.eventDuration.hidden = !actions.eventMode || eventActive;
+  el.eventStop.hidden = !eventActive;
+  el.recoverySection.hidden = el.snoozeControls.hidden && el.eventControls.hidden && state.refreshAttempts === 0;
+  setText(el.attemptCount, attemptCopy(state.refreshAttempts));
+}
+
+function renderActivity(): void {
+  if (!state) return;
+  const signature = JSON.stringify(state.recentHistory.slice(0, 4).map((item) => [item.id, item.timestamp, item.detail]));
+  if (el.activityList.dataset.signature !== signature) {
+    el.activityList.dataset.signature = signature;
+    el.activityList.replaceChildren(...state.recentHistory.slice(0, 4).map(activityItem));
+  }
+  el.qualityFeedback.hidden = !hasUnratedRecovery(state.recentHistory);
+}
+
+function activityItem(item: HistoryEvent): HTMLLIElement {
+  const li = document.createElement("li");
+  const time = document.createElement("time");
+  const date = new Date(item.timestamp);
+  time.dateTime = date.toISOString();
+  time.textContent = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const copy = document.createElement("span");
+  copy.textContent = item.detail;
+  li.append(time, copy);
+  return li;
+}
+
+function hasUnratedRecovery(history: HistoryEvent[]): boolean {
+  const latestRecovery = history.findIndex((item) => ["recovery-step", "page-reload", "recovery-cycle-started"].includes(item.event));
+  if (latestRecovery < 0) return false;
+  const latestRating = history.findIndex((item) => item.event === "user-marked-correct" || item.event === "user-marked-false-alarm");
+  return latestRating < 0 || latestRecovery < latestRating;
+}
+
+function renderEffectiveSetting(target: HTMLElement, mode: SiteOverrideMode, globalValue: boolean): void {
+  if (mode === "default") {
+    const value = globalValue ? message("popupSettingOn", "on") : message("popupSettingOff", "off");
+    setText(target, message("popupDefaultCurrently", `Default is currently ${value}`, [value]));
+  } else {
+    const value = mode === "on" ? message("popupSettingOn", "on") : message("popupSettingOff", "off");
+    setText(target, message("popupCustomizedCurrently", `Customized for this site: ${value}`, [value]));
+  }
+}
+
+function resolveCopy(copy: PopupCopy): string {
+  return message(copy.key, copy.fallback, copy.substitutions);
+}
+
+function attemptCopy(attempts: number): string {
+  if (!attempts) return message("popupNoRecentReloads", "No recent automatic page reloads");
+  return attempts === 1
+    ? message("popupOneReloadAttempt", "1 automatic page reload attempt in the current window")
+    : message("popupReloadAttempts", `${attempts} automatic page reload attempts in the current window`, [String(attempts)]);
+}
+
+function replaceTextList(list: HTMLUListElement, items: string[]): void {
+  const signature = JSON.stringify(items);
+  if (list.dataset.signature === signature) return;
+  list.dataset.signature = signature;
+  list.replaceChildren(...items.map((item) => {
     const li = document.createElement("li");
-    const time = document.createElement("time"); time.textContent = new Date(item.timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    const copy = document.createElement("span"); copy.textContent = item.detail;
-    li.append(time, copy); return li;
+    li.textContent = item;
+    return li;
   }));
 }
+
+function humanize(value: string): string {
+  return value.replaceAll("_", " ").toLowerCase();
+}
+
+function setVisible(element: HTMLElement, visible: boolean): void { element.hidden = !visible; }
+function setText(element: HTMLElement, value: string): void { if (element.textContent !== value) element.textContent = value; }
 
 async function openOptions(hash: string): Promise<void> {
   el.feedback.textContent = "";
@@ -174,11 +443,32 @@ async function openOptions(hash: string): Promise<void> {
     else await apiCall<chrome.tabs.Tab>(ext.tabs.create, ext.tabs, { url: `${ext.runtime.getURL("options.html")}${hash}` });
     window.close();
   } catch (error) {
-    el.feedback.textContent = `Could not open settings: ${error instanceof Error ? error.message : String(error)}`;
+    el.feedback.textContent = `${message("popupOpenSettingsFailed", "Could not open settings")}: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
-function requireTab(): number { if (tabId === undefined) throw new Error("This tab is unavailable."); return tabId; }
-function requireOrigin(): string { if (!origin) throw new Error("This page has no configurable origin."); return origin; }
+
+async function openDashboard(): Promise<void> {
+  el.feedback.textContent = "";
+  try {
+    await apiCall<chrome.tabs.Tab>(ext.tabs.create, ext.tabs, { url: ext.runtime.getURL("dashboard.html") });
+    window.close();
+  } catch (error) {
+    el.feedback.textContent = `${message("popupOpenDashboardFailed", "Could not open Mission Control")}: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function requireTab(): number {
+  if (tabId === undefined) throw new Error(message("popupTabUnavailable", "This tab is unavailable."));
+  return tabId;
+}
+
+function requireOrigin(): string {
+  if (!origin) throw new Error(message("popupNoOrigin", "This page has no configurable origin."));
+  return origin;
+}
+
 function byId<T extends HTMLElement = HTMLElement>(id: string): T {
-  const element = document.getElementById(id); if (!element) throw new Error(`Missing element #${id}`); return element as T;
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Missing element #${id}`);
+  return element as T;
 }

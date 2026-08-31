@@ -3,6 +3,7 @@ import { SETTINGS_SCHEMA_VERSION, type Settings } from "./types";
 export const DEFAULT_SETTINGS: Settings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
   enabled: true,
+  autoRecover: true,
   autoRefresh: true,
   autoMaximize: true,
   checkIntervalSeconds: 3,

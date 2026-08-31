@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-i18n-title="dashboardTitle">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Stream Reviver Mission Control</title>
+    <link rel="stylesheet" href="dashboard.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content" data-i18n="dashboardSkipToContent">Skip to Mission Control</a>
+
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="icon-128.png" alt="" aria-hidden="true">
+        <div>
+          <p class="eyebrow" data-i18n="extensionName">Stream Reviver</p>
+          <h1 data-i18n="dashboardHeading">Mission Control</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <a href="options.html" data-i18n="dashboardSettings">Settings</a>
+        <p class="last-updated">
+          <span data-i18n="dashboardLastUpdated">Last updated</span>
+          <time id="last-updated-time">Waiting…</time>
+        </p>
+      </div>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      <section id="loading-state" class="state-panel" role="status" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <div>
+          <h2 data-i18n="dashboardLoadingTitle">Loading Mission Control</h2>
+          <p data-i18n="dashboardLoadingDetail">Reading local monitor status from this browser.</p>
+        </div>
+      </section>
+
+      <section id="error-state" class="state-panel error-panel" role="alert" hidden>
+        <span class="state-icon" aria-hidden="true">!</span>
+        <div>
+          <h2 data-i18n="dashboardErrorTitle">Mission Control is unavailable</h2>
+          <p data-i18n="dashboardErrorDetail">The extension background did not respond. Your monitoring settings have not changed.</p>
+          <button id="retry-button" type="button" data-i18n="dashboardRetry">Try again</button>
+        </div>
+      </section>
+
+      <div id="dashboard-content" hidden>
+        <section id="system-notice" class="system-notice" aria-labelledby="system-notice-title" hidden>
+          <div>
+            <h2 id="system-notice-title"></h2>
+            <p id="system-notice-detail"></p>
+          </div>
+        </section>
+
+        <section class="summary-section" aria-labelledby="summary-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow" data-i18n="dashboardOverviewEyebrow">LIVE OVERVIEW</p>
+              <h2 id="summary-heading" data-i18n="dashboardOverviewHeading">Protection at a glance</h2>
+            </div>
+          </div>
+          <dl class="summary-grid">
+            <div class="summary-card active-summary">
+              <dt data-i18n="dashboardActiveMonitors">Active monitors</dt>
+              <dd id="active-monitor-count">0</dd>
+            </div>
+            <div class="summary-card healthy-summary">
+              <dt data-i18n="dashboardHealthyMonitors">Healthy</dt>
+              <dd id="healthy-monitor-count">0</dd>
+            </div>
+            <div class="summary-card attention-summary">
+              <dt data-i18n="dashboardNeedAttention">Need attention</dt>
+              <dd id="attention-monitor-count">0</dd>
+            </div>
+            <div class="summary-card protected-summary">
+              <dt data-i18n="dashboardProtectedSites">Protected sites</dt>
+              <dd id="protected-site-count">0</dd>
+            </div>
+          </dl>
+        </section>
+
+        <div class="dashboard-grid">
+          <section class="panel coverage-panel" aria-labelledby="coverage-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="dashboardCoverageEyebrow">CONFIGURATION</p>
+                <h2 id="coverage-heading" data-i18n="dashboardCoverageHeading">Site coverage</h2>
+              </div>
+              <strong id="coverage-summary" class="section-count">0 of 0 protected</strong>
+            </div>
+            <progress id="coverage-progress" max="1" value="0" aria-labelledby="coverage-heading coverage-summary"></progress>
+            <p class="privacy-note"><span aria-hidden="true">●</span> <span data-i18n="dashboardPrivacyNote">Only hostnames are shown. Page paths, queries, and fragments stay out of Mission Control.</span></p>
+            <ul id="configured-sites" class="site-list"></ul>
+            <p id="configured-sites-empty" class="empty-state" hidden data-i18n="dashboardNoSites">No sites are configured yet. Enable a site from the toolbar popup to see it here.</p>
+          </section>
+
+          <section class="panel monitors-panel" aria-labelledby="monitors-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="dashboardMonitorsEyebrow">NOW MONITORING</p>
+                <h2 id="monitors-heading" data-i18n="dashboardMonitorsHeading">Active streams</h2>
+              </div>
+            </div>
+            <div id="active-monitors" class="monitor-grid"></div>
+            <p id="active-monitors-empty" class="empty-state" hidden data-i18n="dashboardNoMonitors">No active streams right now. Open a configured site to begin monitoring.</p>
+          </section>
+
+          <section class="panel recoveries-panel" aria-labelledby="recoveries-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow" data-i18n="dashboardRecoveriesEyebrow">RECENT ACTIVITY</p>
+                <h2 id="recoveries-heading" data-i18n="dashboardRecoveriesHeading">Recovery events</h2>
+              </div>
+            </div>
+            <ol id="recent-recoveries" class="recovery-list"></ol>
+            <p id="recent-recoveries-empty" class="empty-state" hidden data-i18n="dashboardNoRecoveries">No recent recovery events. Quiet is good.</p>
+          </section>
+        </div>
+      </div>
+
+      <p id="status-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    </main>
+
+    <footer>
+      <p data-i18n="dashboardLocalOnly">Mission Control uses extension data stored locally in this browser.</p>
+    </footer>
+    <script src="dashboard.js"></script>
+  </body>
+</html>

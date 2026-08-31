@@ -1,19 +1,37 @@
 export class UiLayer {
+  private static readonly MAX_COUNTDOWN_RENDER_GAP_MS = 1_500;
   private host: HTMLElement | null = null;
   private shadow: ShadowRoot | null = null;
   private countdownEnd = 0;
   private countdownTimer: number | null = null;
   private countdownExpire: (() => void) | null = null;
+  private countdownCancel: (() => void | Promise<void>) | null = null;
+  private countdownHeld = false;
+  private countdownPainted = false;
+  private countdownContinuityBroken = false;
+  private lastCountdownRenderAt = 0;
+  private countdownPaintFrame: number | null = null;
+  private fullscreenListenerInstalled = false;
 
   showCountdown(
-    seconds: number,
+    deadline: number,
     reason: string,
-    callbacks: { cancel: () => void; extend: (seconds: number) => void; expire: () => void }
-  ): void {
+    callbacks: { cancel: () => void | Promise<void>; extend: (seconds: number) => void | Promise<void>; expire: () => void | Promise<void> }
+  ): boolean {
+    if (!Number.isFinite(deadline) || deadline <= Date.now() ||
+      document.visibilityState !== "visible" || !this.fullscreenCanRenderOverlay()) return false;
     const root = this.ensure();
-    if (root.getElementById("countdown")) return;
-    this.countdownEnd = Date.now() + seconds * 1000;
+    // Replace, rather than acknowledge, any stale panel so the visible
+    // callbacks always carry the coordinator's current one-use action token.
+    this.hideCountdown();
+    // The coordinator owns the deadline. Never reconstruct it from rounded
+    // seconds or the visible panel can outlive the privileged alarm.
+    this.countdownEnd = deadline;
+    this.countdownPainted = false;
+    this.countdownContinuityBroken = false;
+    this.lastCountdownRenderAt = performance.now();
     this.countdownExpire = callbacks.expire;
+    this.countdownCancel = callbacks.cancel;
     const panel = document.createElement("section");
     panel.id = "countdown";
     panel.className = "panel countdown";
@@ -23,24 +41,67 @@ export class UiLayer {
     panel.querySelector("small")!.textContent = reason;
     const buttons = panel.querySelector(".buttons")!;
     buttons.append(
-      button("+30 sec", () => { this.extendCountdown(30); callbacks.extend(30); }),
+      button("+30 sec", () => callbacks.extend(30)),
       button("Cancel", callbacks.cancel, "light")
     );
     root.append(panel);
     this.renderCountdown();
+    this.countdownPaintFrame = requestAnimationFrame(() => {
+      this.countdownPaintFrame = requestAnimationFrame(() => {
+        this.countdownPaintFrame = null;
+        this.countdownPainted = this.countdownIsRenderable();
+        this.lastCountdownRenderAt = performance.now();
+      });
+    });
     this.countdownTimer = window.setInterval(() => this.renderCountdown(), 200);
+    return panel.isConnected && this.host?.isConnected === true && this.fullscreenCanRenderOverlay();
   }
 
-  extendCountdown(seconds: number): void {
-    if (!this.shadow?.getElementById("countdown")) return;
+  extendCountdown(seconds: number): boolean {
+    if (!this.countdownIsRenderable()) return false;
     this.countdownEnd += seconds * 1000;
     this.renderCountdown();
+    return true;
+  }
+
+  setCountdownDeadline(deadline: number): boolean {
+    if (!this.countdownIsRenderable() || !Number.isFinite(deadline)) return false;
+    this.countdownEnd = Math.max(this.countdownEnd, deadline);
+    this.renderCountdown();
+    return true;
+  }
+
+  setCountdownHeld(held: boolean): void {
+    this.countdownHeld = held && this.countdownIsRenderable();
+    this.renderCountdown();
+  }
+
+  /** Consume the visible countdown at its authoritative deadline. The caller
+   * may acknowledge a privileged reload only when this returns true. */
+  finalizeCountdown(requestedDeadline = this.countdownEnd): boolean {
+    const renderGap = performance.now() - this.lastCountdownRenderAt;
+    if (!Number.isFinite(requestedDeadline) || requestedDeadline < this.countdownEnd ||
+      Date.now() < this.countdownEnd || this.countdownHeld || !this.countdownPainted ||
+      this.countdownContinuityBroken || renderGap > UiLayer.MAX_COUNTDOWN_RENDER_GAP_MS ||
+      !this.countdownIsRenderable()) return false;
+    const callback = this.countdownExpire;
+    if (!callback) return false;
+    this.hideCountdown();
+    callback();
+    return true;
   }
 
   hideCountdown(): void {
     if (this.countdownTimer !== null) window.clearInterval(this.countdownTimer);
     this.countdownTimer = null;
     this.countdownExpire = null;
+    this.countdownCancel = null;
+    this.countdownHeld = false;
+    this.countdownPainted = false;
+    this.countdownContinuityBroken = false;
+    this.lastCountdownRenderAt = 0;
+    if (this.countdownPaintFrame !== null) cancelAnimationFrame(this.countdownPaintFrame);
+    this.countdownPaintFrame = null;
     this.shadow?.getElementById("countdown")?.remove();
   }
 
@@ -112,6 +173,8 @@ export class UiLayer {
     this.host?.remove();
     this.host = null;
     this.shadow = null;
+    if (this.fullscreenListenerInstalled) document.removeEventListener("fullscreenchange", this.onFullscreenChange, true);
+    this.fullscreenListenerInstalled = false;
   }
 
   containsEvent(event: Event): boolean {
@@ -122,34 +185,96 @@ export class UiLayer {
     if (this.shadow) return this.shadow;
     this.host = document.createElement("div");
     this.host.id = "stream-reviver-ui-host";
-    this.host.style.cssText = "all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;";
+    this.host.style.cssText = "all:initial!important;display:block!important;visibility:visible!important;opacity:1!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;";
     this.shadow = this.host.attachShadow({ mode: "closed" });
     const style = document.createElement("style");
     style.textContent = STYLES;
     this.shadow.append(style);
-    (document.documentElement ?? document).append(this.host);
+    this.mountHostForFullscreen();
+    if (!this.fullscreenListenerInstalled) {
+      document.addEventListener("fullscreenchange", this.onFullscreenChange, true);
+      this.fullscreenListenerInstalled = true;
+    }
     return this.shadow;
   }
 
   private renderCountdown(): void {
     const label = this.shadow?.querySelector<HTMLElement>("[data-count]");
     if (!label) return;
-    const remaining = Math.max(0, Math.ceil((this.countdownEnd - Date.now()) / 1000));
-    label.textContent = `Refreshing in ${remaining} second${remaining === 1 ? "" : "s"}.`;
-    if (remaining === 0) {
-      const callback = this.countdownExpire;
+    const renderAt = performance.now();
+    if (this.lastCountdownRenderAt > 0 &&
+      renderAt - this.lastCountdownRenderAt > UiLayer.MAX_COUNTDOWN_RENDER_GAP_MS) {
+      this.countdownContinuityBroken = true;
+    }
+    this.lastCountdownRenderAt = renderAt;
+    if (this.countdownContinuityBroken || !this.countdownIsRenderable()) {
+      const cancel = this.countdownCancel;
       this.hideCountdown();
-      callback?.();
+      if (cancel) void Promise.resolve(cancel()).catch(() => undefined);
+      return;
+    }
+    const remaining = Math.max(0, Math.ceil((this.countdownEnd - Date.now()) / 1000));
+    label.textContent = this.countdownHeld ? "Updating countdown…" : `Refreshing in ${remaining} second${remaining === 1 ? "" : "s"}.`;
+    if (remaining === 0 && !this.countdownHeld) {
+      this.finalizeCountdown(this.countdownEnd);
     }
   }
+
+  private countdownIsRenderable(): boolean {
+    const host = this.host;
+    const panel = this.shadow?.getElementById("countdown");
+    if (document.visibilityState !== "visible" || !host?.isConnected || !panel ||
+      !this.fullscreenCanRenderOverlay() || host.hidden) return false;
+    try {
+      const style = getComputedStyle(host);
+      const hostRect = host.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      return style.display !== "none" && style.visibility === "visible" && Number(style.opacity) > 0 &&
+        style.contentVisibility !== "hidden" && style.clipPath === "none" &&
+        hostRect.width > 1 && hostRect.height > 1 && panelRect.width > 1 && panelRect.height > 1;
+    } catch {
+      return false;
+    }
+  }
+
+  private fullscreenCanRenderOverlay(): boolean {
+    const fullscreen = document.fullscreenElement;
+    if (!fullscreen) return true;
+    // Replaced elements do not render arbitrary appended descendants. Mounting
+    // the host there could produce a connected-but-invisible safety panel.
+    return fullscreen instanceof HTMLElement &&
+      !["AUDIO", "CANVAS", "EMBED", "IFRAME", "IMG", "INPUT", "OBJECT", "TEXTAREA", "VIDEO"]
+        .includes(fullscreen.tagName);
+  }
+
+  private mountHostForFullscreen(): void {
+    if (!this.host) return;
+    const fullscreen = document.fullscreenElement;
+    const target = fullscreen && this.fullscreenCanRenderOverlay() ? fullscreen : document.documentElement;
+    (target ?? document).append(this.host);
+  }
+
+  private readonly onFullscreenChange = (): void => {
+    if (this.fullscreenCanRenderOverlay()) {
+      this.mountHostForFullscreen();
+      return;
+    }
+    if (!this.shadow?.getElementById("countdown")) return;
+    const cancel = this.countdownCancel;
+    this.hideCountdown();
+    if (cancel) void Promise.resolve(cancel()).catch(() => undefined);
+  };
 }
 
-function button(label: string, action: () => void, kind = "dark"): HTMLButtonElement {
+function button(label: string, action: () => void | Promise<void>, kind = "dark"): HTMLButtonElement {
   const element = document.createElement("button");
   element.type = "button";
   element.textContent = label;
   element.className = kind;
-  element.addEventListener("click", action);
+  element.addEventListener("click", () => {
+    element.disabled = true;
+    Promise.resolve(action()).catch(() => undefined).finally(() => { if (element.isConnected) element.disabled = false; });
+  });
   return element;
 }
 

@@ -92,7 +92,8 @@ async function start() {
 
   try {
     const recording = await recordCanvasClip();
-    createVideo();
+    if (mode === "shadow") createShadowVideo();
+    else createVideo();
     if (mode === "stall") await playAsOpenMediaSource(recording);
     else {
       video.loop = true;
@@ -219,6 +220,27 @@ function createVideo() {
   video.playsInline = true;
   video.controls = true;
   player.prepend(video);
+}
+
+function createShadowVideo() {
+  placeholder?.remove();
+  const host = document.createElement("div");
+  host.id = "open-shadow-player";
+  host.style.display = "block";
+  host.style.width = "100%";
+  const root = host.attachShadow({ mode: "open" });
+  video = document.createElement("video");
+  video.id = "shadow-test-video";
+  video.setAttribute("aria-label", "Open shadow root test video");
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.controls = true;
+  video.style.display = "block";
+  video.style.width = "100%";
+  video.style.aspectRatio = "16 / 9";
+  root.append(video);
+  player.prepend(host);
 }
 
 async function recordCanvasClip() {

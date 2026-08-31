@@ -12,3 +12,5 @@ Required: none. Stream Reviver does not transmit analytics, technical data, brow
 
 REVIEW NOTES
 Use docs/REVIEWER_GUIDE.md and the generated local fixture. The MV3 Gecko manifest declares data_collection_permissions.required = ["none"]. Optional site access is requested one origin at a time.
+The standard alarms permission is used only for one-shot recovery/countdown deadlines that must survive non-persistent background suspension; it grants no site access and is not used for tracking.
+Optional visual sampling is separately acknowledged, restricted to the elected player in the active visible top-level tab, and processed ephemerally in the privileged background. Only a fixed comparison hash reaches the requesting content script; no image bytes are stored, returned, or transmitted externally.

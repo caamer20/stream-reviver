@@ -7,15 +7,17 @@ const settings = effectiveSettings(normalizeSettings({}), "https://example.com")
 const sample: PlayerObservation = {
   timestamp: 1_000, currentTime: 1, duration: Infinity, paused: false, ended: false, readyState: 4, networkState: 2,
   timeAdvanced: true, framesAdvanced: true, presentedFrames: 30, droppedFrameRatio: .01, bufferAheadSeconds: 5,
-  liveEdge: 2, liveEdgeLagSeconds: 1, waitingEvents: 0, explicitError: "", online: true, hidden: false, userPaused: false,
+  seekableStart: 0, liveEdge: 2, liveEdgeLagSeconds: 1, waitingEvents: 0, explicitError: "", online: true, hidden: false, userPaused: false,
   recentBackwardSeek: false, accessInterruption: "", adTransition: false, lifecycleGapMs: 1_000, protocol: null
 };
 const observationWindows = Array.from({ length: 64 }, () => new ObservationWindow());
 
 const results = {
   diagnosis: measure(100_000, () => diagnoseFailure(sample, {
-    sampleCount: 4, windowMs: 3_000, bufferDelta: 1, liveEdgeDelta: 1, mediaTimeDelta: 3, presentedFrameDelta: 90,
+    sampleCount: 4, windowMs: 3_000, bufferDelta: 1, seekableStartDelta: 0, liveEdgeDelta: 1, durationDelta: null,
+    mediaTimeDelta: 3, presentedFrameDelta: 90,
     consecutiveFrozenSamples: 0, consecutiveFrameFrozenSamples: 0, consecutiveStarvedSamples: 0,
+    frozenDurationMs: 0, frameFrozenDurationMs: 0, starvedDurationMs: 0,
     averageDroppedFrameRatio: .01, streamKind: "CONFIRMED_LIVE", liveIntent: "FOLLOWING_LIVE"
   }, settings)),
   observations: measure(50_000, (index) => {

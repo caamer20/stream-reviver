@@ -10,11 +10,19 @@
     <a class="skip-link" href="#main-content">Skip to settings</a>
     <header class="topbar">
       <img class="logo" src="icon-128.png" alt="" aria-hidden="true">
-      <div><h1 data-i18n="extensionName">Stream Reviver</h1><p>Settings and site access</p></div>
+      <div class="topbar-title"><h1 data-i18n="extensionName">Stream Reviver</h1><p>Settings and site access</p></div>
+      <div class="topbar-tools">
+        <label class="settings-search" for="settings-search"><span class="visually-hidden">Search settings</span><input id="settings-search" type="search" placeholder="Search settings…" autocomplete="off"></label>
+        <div class="mode-switch" role="group" aria-label="Settings detail level">
+          <button id="basic-mode" type="button" aria-pressed="true">Basic</button>
+          <button id="advanced-mode" type="button" aria-pressed="false">Advanced</button>
+        </div>
+      </div>
     </header>
 
     <div class="layout">
       <nav aria-label="Settings sections">
+        <a href="dashboard.html">Mission Control</a>
         <a href="#global">Global defaults</a>
         <a href="#sites">Per-site settings</a>
         <a href="#diagnostics">Diagnostics</a>
@@ -28,7 +36,8 @@
           <div class="section-heading"><div><h2>Global defaults</h2><p>Safe defaults applied unless a site has an override.</p></div><button id="save-global" class="primary" type="button">Save defaults</button></div>
           <div class="setting-grid">
             <label class="toggle-row"><span><strong>Extension enabled</strong><small>Master switch for all monitoring.</small></span><input id="enabled" type="checkbox" role="switch"></label>
-            <label class="toggle-row"><span><strong>Automatic refresh</strong><small>Schedule a page reload after a sustained failure.</small></span><input id="autoRefresh" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Automatic recovery</strong><small>Run configured recovery steps after a sustained failure. Monitoring and manual actions remain available when off.</small></span><input id="autoRecover" type="checkbox" role="switch"></label>
+            <label class="toggle-row"><span><strong>Automatic page refresh</strong><small>Allow page reload as the final automatic recovery step. Requires automatic recovery.</small></span><input id="autoRefresh" type="checkbox" role="switch"></label>
             <label class="toggle-row"><span><strong>Automatic maximize</strong><small>Try to restore a large player after an automatic reload.</small></span><input id="autoMaximize" type="checkbox" role="switch"></label>
             <label><span>Check interval <small>Seconds between health checks.</small></span><input id="checkIntervalSeconds" type="number" min="1" max="60"></label>
             <label><span>Healthy interval <small>Slower polling while playback is healthy.</small></span><input id="healthyCheckIntervalSeconds" type="number" min="2" max="120"></label>
@@ -64,7 +73,7 @@
             <label><span>Actions per recovery cycle <small>Hard limit before the circuit breaker opens.</small></span><input id="maxRecoveryActionsPerCycle" type="number" min="1" max="30"></label>
             <label><span>Visual sample interval <small>Seconds between experimental visible-tab samples.</small></span><input id="visualSampleIntervalSeconds" type="number" min="5" max="120"></label>
           </div>
-          <fieldset class="recovery-strategy"><legend>Recovery ladder</legend><p>Drag-free ordered steps are run from left to right. Uncheck disruptive steps you do not want.</p><div id="global-recovery-actions" class="check-grid"></div><label><span>Backoff seconds <small>Comma-separated delays used between recovery steps.</small></span><input id="recoveryBackoffSeconds" type="text" placeholder="5, 15, 45, 120"></label></fieldset>
+          <fieldset class="recovery-strategy"><legend>Recovery ladder</legend><p>Enable the actions you allow. Stream Reviver chooses a diagnosis-specific, least-disruptive order and always keeps page reload last.</p><div id="global-recovery-actions" class="check-grid"></div><label><span>Backoff seconds <small>Comma-separated delays used between recovery steps.</small></span><input id="recoveryBackoffSeconds" type="text" placeholder="5, 15, 45, 120"></label></fieldset>
         </section>
 
         <section id="sites" class="card">
@@ -100,7 +109,7 @@
         </section>
 
         <section id="diagnostics" class="card">
-          <div class="section-heading"><div><h2>Local diagnostics</h2><p>A bounded event timeline stored only in this browser.</p></div><div class="button-row"><button id="export-diagnostics" type="button">Export diagnostics</button><button id="clear-diagnostics" class="danger" type="button">Clear history</button></div></div>
+          <div class="section-heading"><div><h2>Local diagnostics</h2><p>A bounded event timeline stored only in this browser.</p></div><div class="button-row"><button id="export-diagnostics" type="button">Preview support bundle</button><button id="clear-diagnostics" class="danger" type="button">Clear history</button></div></div>
           <div id="diagnostic-stats" class="stats"></div>
           <div class="history-table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>Detail</th><th>Page</th></tr></thead><tbody id="diagnostic-history"></tbody></table></div>
         </section>
@@ -127,10 +136,10 @@
           <h2>Privacy &amp; local data</h2>
           <p>Stream Reviver does not transmit analytics or playback data. You can remove each locally stored category independently or erase everything.</p>
           <dl class="data-inventory">
-            <div><dt>Synced settings</dt><dd>Global defaults, configured origins, selectors, and URL rules.</dd></div>
-            <div><dt>Local history and models</dt><dd>Bounded diagnostic events and locally learned action outcomes.</dd></div>
+            <div><dt>Optional browser sync</dt><dd>Compact global defaults only. The browser vendor may synchronize them between signed-in browser profiles.</dd></div>
+            <div><dt>Device-local site data</dt><dd>Enabled origins, selectors, URL rules, backup URLs, profiles, diagnostic events, and learned outcomes stay in local extension storage.</dd></div>
             <div><dt>Session recovery state</dt><dd>Short-lived reload protection, status, and player restoration snapshots.</dd></div>
-            <div><dt>Visual watchdog</dt><dd>Active-tab screenshots are reduced to an 8×8 hash in memory and never stored or transmitted.</dd></div>
+            <div><dt>Visual watchdog</dt><dd>The privileged background reduces the elected top-level player crop to a fixed 64-bit hash. No image bytes leave the background or enter storage.</dd></div>
           </dl>
           <p id="visual-consent-state" class="privacy-state"></p>
           <div class="button-row">
@@ -151,13 +160,35 @@
         </section>
 
         <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+        <p id="search-empty" class="search-empty" hidden>No settings match this search.</p>
       </main>
+    </div>
+    <div id="dirty-bar" class="dirty-bar" hidden>
+      <strong id="dirty-copy">Unsaved settings changes.</strong>
+      <span>Use the Save button in the edited section, or discard the draft.</span>
+      <button id="discard-unsaved" type="button">Discard and reload</button>
     </div>
     <dialog id="visual-consent" aria-labelledby="visual-consent-title">
       <form method="dialog">
         <h2 id="visual-consent-title">Enable visual monitoring?</h2>
-        <p>The visual watchdog can capture a crop of the active visible tab. Processing stays in this browser: the crop is reduced to a tiny comparison hash in memory, and neither the image nor hash is transmitted. Static video frames can be legitimate, so visual evidence never triggers recovery by itself.</p>
+        <p>The visual watchdog can capture the elected player in the active visible top-level tab. Processing stays in this browser: the privileged extension background crops and reduces the image to a fixed 64-bit comparison hash, immediately discards the capture, and returns no image bytes to page-facing code. The hash is not stored or sent externally. Static video frames can be legitimate, so visual evidence never triggers recovery by itself.</p>
         <div class="button-row"><button value="cancel" type="submit">Keep disabled</button><button id="accept-visual-consent" value="accept" class="primary" type="submit">Enable visual watchdog</button></div>
+      </form>
+    </dialog>
+    <dialog id="diagnostic-export-dialog" aria-labelledby="diagnostic-export-title">
+      <form method="dialog">
+        <h2 id="diagnostic-export-title">Review diagnostic support bundle</h2>
+        <p>The default export uses site aliases, removes URL paths, omits selectors, and excludes exact browser details. Stream content, screenshots, credentials, cookies, and DRM data are never included.</p>
+        <fieldset>
+          <legend>Optional identifying details</legend>
+          <label class="option-check"><input id="diagnostic-include-origins" type="checkbox"> Include exact site origins</label>
+          <label class="option-check"><input id="diagnostic-include-paths" type="checkbox"> Include URL paths (queries and fragments remain excluded)</label>
+          <label class="option-check"><input id="diagnostic-include-selectors" type="checkbox"> Include custom selectors</label>
+          <label class="option-check"><input id="diagnostic-include-browser" type="checkbox"> Include exact browser user-agent details</label>
+        </fieldset>
+        <p id="diagnostic-export-summary"></p>
+        <pre id="diagnostic-export-preview" class="diagnostic-preview" tabindex="0" aria-label="Diagnostic export preview"></pre>
+        <div class="button-row"><button value="cancel" type="submit">Cancel</button><button id="download-diagnostics" class="primary" type="button">Download reviewed bundle</button></div>
       </form>
     </dialog>
     <script src="options.js"></script>

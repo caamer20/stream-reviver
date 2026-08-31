@@ -3,6 +3,12 @@
   "version": "3.1.3",
   "private": true,
   "description": "A conservative, opt-in live stream monitor for Chrome and Firefox.",
+  "license": "MIT",
+  "packageManager": "npm@11.4.2",
+  "engines": {
+    "node": "24.2.0",
+    "npm": "11.4.2"
+  },
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -16,12 +22,17 @@
     "test:e2e": "node scripts/e2e.mjs",
     "test:performance": "node scripts/performance-check.mjs",
     "test:accessibility": "node scripts/accessibility-check.mjs",
-    "test:soak:smoke": "npm run build && node scripts/soak.mjs --iterations 1",
+    "test:release-integrity": "node scripts/release-integrity.test.mjs && node scripts/deterministic-zip.test.mjs && node scripts/no-egress.test.mjs",
+    "test:soak:smoke": "npm run build && node scripts/soak.mjs --smoke",
     "test:soak": "npm run build && node scripts/soak.mjs --hours 24",
     "test:firefox": "npm run build && node scripts/firefox-smoke.mjs",
     "lint:firefox": "npm run build && node scripts/firefox-smoke.mjs --lint-only",
-    "release:check": "npm run check && npm run test:coverage && npm run test:performance && npm run test:accessibility && npm run build:stable && node scripts/release-check.mjs --channel stable",
+    "check:toolchain": "node scripts/toolchain-check.mjs",
+    "audit:runtime": "npm audit --omit=dev --audit-level=high",
+    "release:check": "npm run check:toolchain && npm run audit:runtime && npm run check && npm run test:coverage && npm run test:performance && npm run test:accessibility && npm run test:release-integrity && npm run build:stable && node scripts/release-check.mjs --channel stable",
     "package": "npm run release:check && node scripts/package.mjs",
+    "package:tagged": "npm run release:check && node scripts/package.mjs --require-tag",
+    "verify:reproducible": "node scripts/reproducibility-check.mjs",
     "verify": "npm run check && npm test && npm run build"
   },
   "devDependencies": {

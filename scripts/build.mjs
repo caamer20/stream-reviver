@@ -1,8 +1,8 @@
 import { build } from "esbuild";
-import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createIconPng } from "./icon.mjs";
+import { canonicalDigest, createBuildIdentity, readArgument } from "./release-integrity.mjs";
 
 const root = process.cwd();
 const requestedChannel = readArgument("--channel") ?? "development";
@@ -12,13 +12,14 @@ const outRoot = legacyLayout ? path.join(root, "dist") : path.join(root, "dist",
 const browsers = ["chrome", "firefox"];
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const channelConfig = JSON.parse(await readFile(path.join(root, "config", `${requestedChannel}.json`), "utf8"));
-const commit = gitCommit();
+const buildIdentity = await createBuildIdentity({ root, packageJson, channel: requestedChannel });
 const entryPoints = {
   background: "src/background/background.ts",
   content: "src/content/content.ts",
   "page-bridge": "src/page-bridge/bridge.ts",
   popup: "src/popup/popup.ts",
   options: "src/options/options.ts",
+  dashboard: "src/dashboard/dashboard.ts",
   welcome: "src/welcome/welcome.ts"
 };
 
@@ -52,6 +53,8 @@ for (const browser of browsers) {
     "popup/popup.css",
     "options/options.html",
     "options/options.css",
+    "dashboard/dashboard.html",
+    "dashboard/dashboard.css",
     "welcome/welcome.html",
     "welcome/welcome.css",
     "content/content.css"
@@ -73,9 +76,7 @@ for (const browser of browsers) {
 
   const manifest = createManifest(browser);
   await writeFile(path.join(outdir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile(path.join(outdir, "build-info.json"), `${JSON.stringify({
-    channel: requestedChannel, version: packageJson.version, commit, target: browser
-  }, null, 2)}\n`);
+  await writeFile(path.join(outdir, "build-info.json"), `${JSON.stringify({ ...buildIdentity, target: browser }, null, 2)}\n`);
 
   for (const size of [16, 32, 48, 128]) {
     await writeFile(path.join(outdir, `icon-${size}.png`), createIconPng(size));
@@ -83,9 +84,9 @@ for (const browser of browsers) {
 }
 
 await cp(path.join(root, "test"), path.join(outRoot, "test-page"), { recursive: true });
-await writeFile(path.join(outRoot, "provenance.json"), `${JSON.stringify({
-  channel: requestedChannel, version: packageJson.version, commit, generatedAt: new Date().toISOString(), node: process.version
-}, null, 2)}\n`);
+const outputs = {};
+for (const browser of browsers) outputs[browser] = canonicalDigest(await collectOutput(path.join(outRoot, browser)));
+await writeFile(path.join(outRoot, "provenance.json"), `${JSON.stringify({ ...buildIdentity, targets: outputs }, null, 2)}\n`);
 console.log(`Built ${requestedChannel} Chrome, Firefox, and test-page output in ${path.relative(root, outRoot)}`);
 
 function createManifest(browser) {
@@ -96,7 +97,7 @@ function createManifest(browser) {
     short_name: "__MSG_shortName__",
     version: packageJson.version,
     description: "__MSG_extensionDescription__",
-    permissions: ["storage", "activeTab", "scripting"],
+    permissions: ["storage", "activeTab", "scripting", "alarms"],
     optional_permissions: ["notifications"],
     optional_host_permissions: ["<all_urls>"],
     action: {
@@ -110,7 +111,7 @@ function createManifest(browser) {
       open_in_tab: true
     },
     content_security_policy: {
-      extension_pages: "script-src 'self'; object-src 'none'"
+      extension_pages: "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'none'"
     },
     commands: {
       "refresh-stream": {
@@ -133,13 +134,13 @@ function createManifest(browser) {
     manifest.browser_specific_settings = {
       gecko: {
         id: channelConfig.firefoxId,
-        strict_min_version: "140.0",
+        // data_collection_permissions is supported by Firefox desktop 140 but
+        // only by Firefox for Android 142. Use one truthful cross-platform
+        // floor instead of claiming a separately untested Android target.
+        strict_min_version: "142.0",
         data_collection_permissions: {
           required: ["none"]
         }
-      },
-      gecko_android: {
-        strict_min_version: "142.0"
       }
     };
     // Firefox MV3 uses a non-persistent background script rather than Chrome's
@@ -150,18 +151,6 @@ function createManifest(browser) {
   return manifest;
 }
 
-function readArgument(name) {
-  const direct = process.argv.find((argument) => argument.startsWith(`${name}=`));
-  if (direct) return direct.slice(name.length + 1);
-  const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] : null;
-}
-
-function gitCommit() {
-  try { return execFileSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: root, encoding: "utf8" }).trim(); }
-  catch { return "uncommitted"; }
-}
-
 function iconMap() {
   return {
     "16": "icon-16.png",
@@ -169,4 +158,23 @@ function iconMap() {
     "48": "icon-48.png",
     "128": "icon-128.png"
   };
+}
+
+async function collectOutput(directory) {
+  const base = path.resolve(directory);
+  const files = [];
+  async function visit(current) {
+    for (const name of (await readdir(current)).sort()) {
+      const file = path.join(current, name);
+      const info = await lstat(file);
+      const relative = path.relative(base, file).replaceAll(path.sep, "/");
+      if (info.isDirectory()) await visit(file);
+      else {
+        if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Build output is not a regular file: ${relative}`);
+        files.push({ name: relative, data: await readFile(file) });
+      }
+    }
+  }
+  await visit(base);
+  return files;
 }
