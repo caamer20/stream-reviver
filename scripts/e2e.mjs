@@ -271,7 +271,10 @@ async function popupScenario(debugPort) {
   assert.equal(layout.footerVisible, true, "popup footer should remain visible without scrolling");
   assert.equal(layout.settingsVisible, true, "settings control should remain visible");
   assert.ok(!layout.feedback.includes("startup error"), `popup should initialize without a startup error: ${layout.feedback}`);
-  await evaluateTarget(popup, `(()=>{document.getElementById('open-settings').click();return true})()`);
+  // Let CDP return before the production handler opens a tab and closes this
+  // popup. Otherwise Chrome can destroy the evaluation context before replying.
+  console.log("Popup navigation: opening Settings");
+  await evaluateTarget(popup, `(()=>{setTimeout(()=>document.getElementById('open-settings').click(),0);return true})()`);
   await wait(800);
   const after = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((response) => response.json());
   const options = after.find((item) => item.type === "page" && item.url.startsWith(`${extensionOrigin}/options.html`));
@@ -283,7 +286,8 @@ async function popupScenario(debugPort) {
   const dashboardPopup = await createTarget(debugPort, `${extensionOrigin}/popup.html?e2e=dashboard`);
   await setTargetViewport(dashboardPopup, 390, 600);
   await wait(800);
-  await evaluateTarget(dashboardPopup, `(()=>{document.getElementById('open-dashboard').click();return true})()`);
+  console.log("Popup navigation: opening Mission Control");
+  await evaluateTarget(dashboardPopup, `(()=>{setTimeout(()=>document.getElementById('open-dashboard').click(),0);return true})()`);
   await wait(1_000);
   const dashboardTargets = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((response) => response.json());
   const dashboard = dashboardTargets.find((item) => item.type === "page" && item.url.startsWith(`${extensionOrigin}/dashboard.html`));
