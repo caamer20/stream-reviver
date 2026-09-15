@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/stream-reviver-icon.png" alt="Stream Reviver icon" width="96" height="96">
+
 # Stream Reviver
 
 **A privacy-first recovery assistant for live video streams.**
@@ -11,13 +13,25 @@
 [![License](https://img.shields.io/badge/license-MIT-334155)](LICENSE)
 [![CI](https://github.com/caamer20/stream-reviver/actions/workflows/ci.yml/badge.svg)](https://github.com/caamer20/stream-reviver/actions/workflows/ci.yml)
 
-[Website](https://www.cameronamer.com) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Privacy](docs/PRIVACY.md) · [Roadmap](ROADMAP.md)
+[Website](https://www.cameronamer.com) · [Getting started](#getting-started) · [Documentation](#documentation) · [Changelog](CHANGELOG.md)
 
 </div>
 
-Stream Reviver detects, explains, and safely recovers live-stream failures in Chrome and Firefox. It is generic and opt-in: there are no hardcoded streaming sites, analytics, trackers, remote code, or extension-originated external API calls. Monitoring begins only after the user acknowledges the disclaimer, enables an exact origin, and grants that origin permission.
+Stream Reviver helps live video recover when playback stalls or fails. It watches HTML5 players on sites you explicitly enable, tries gentle recovery actions first, and uses a cancelable page refresh when needed. After an automatic refresh, it can restore fullscreen so you can get back to watching.
 
-Unlike a simple stall timer, Stream Reviver uses a rolling observation window, typed failure classification, a least-disruptive recovery policy, sustained-playback verification, and a circuit breaker. It can retry playback, return to the live edge, use a configured player control, reload a failed page with a cancelable countdown, and restore fullscreen or a safe viewport-filling fallback afterward.
+Built for Chrome and Firefox, with no analytics, advertising, remote code, or extension-operated external API calls. You choose each site and approve its access before monitoring starts.
+
+## Getting started
+
+**Firefox:** Version 3.1.4 was submitted to Mozilla for public listing on September 15, 2026. At submission, it was awaiting review; approval and publication are controlled by Mozilla. [Firefox listing](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/).
+
+For local installation in Chrome or Firefox, follow the [development setup](#install-for-local-development) below. Once installed:
+
+1. Acknowledge the first-run information.
+2. Open your stream and choose **Monitor this site** in the extension popup.
+3. Approve access for that site. Use Settings to adjust recovery, fullscreen, or per-site preferences.
+
+**Fullscreen after refresh** is on by default and can be disabled globally or per site. If the browser requires a click for native fullscreen, Stream Reviver offers a reversible viewport-filling layout or click prompt.
 
 ## Highlights
 
@@ -27,13 +41,17 @@ Unlike a simple stall timer, Stream Reviver uses a rolling observation window, t
 | Safe recovery | Starts with low-risk actions, verifies the result, limits retries, and keeps full-page reload as the final automatic step. |
 | Fullscreen after refresh | Enabled by default, configurable globally or per site, and falls back gracefully when browsers require a user gesture. |
 | Exact-origin access | Requests only the site the user enables; no persistent broad host permission is shipped. |
-| Local-first privacy | Settings, diagnostics, outcome models, and recovery state stay inside browser storage. |
+| Privacy | Per-site settings and diagnostics stay in your browser profile; compact global preferences may sync through your browser account. |
 | Cross-browser delivery | One TypeScript codebase produces Chrome MV3 and Firefox MV3 builds with channel-specific manifests. |
 
 ## Install for local development
 
+Use Node.js 24.2.0 and npm 11.4.2, the pinned release toolchain.
+
 ```bash
-npm install
+git clone https://github.com/caamer20/stream-reviver.git
+cd stream-reviver
+npm ci
 npm run build
 ```
 
@@ -42,7 +60,16 @@ npm run build
 
 After installation, acknowledge the disclaimer, open a stream, and enable **Monitor this site** from the popup. See the detailed [Chrome](#load-in-chrome) and [Firefox](#load-in-firefox) instructions below.
 
-## What is implemented
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md) — components, monitoring, and recovery design.
+- [Privacy policy](docs/PRIVACY.md) and [security design](docs/SECURITY.md) — permissions, local data, and trust boundaries.
+- [Test matrix](docs/TEST_MATRIX.md) and [reviewer guide](docs/REVIEWER_GUIDE.md) — validation and reproducible review.
+- [Contributing](CONTRIBUTING.md), [support](SUPPORT.md), and [security reporting](SECURITY.md).
+- [Release checklist](docs/RELEASE_CHECKLIST.md), [changelog](CHANGELOG.md), and [roadmap](ROADMAP.md).
+
+<details>
+<summary><strong>Complete feature inventory</strong></summary>
 
 - Dynamic HTML5 video discovery in top-level documents, open shadow roots, and permitted frames. When a large cross-origin embed cannot be inspected, the top page reports a non-actionable limited-visibility advisory containing only the embedded origin; the user must explicitly enable that origin before it can be monitored.
 - Stable primary-player scoring using visible area, playback, audio, readiness, interaction, and preview/ad penalties.
@@ -68,6 +95,8 @@ After installation, acknowledge the disclaimer, open a stream, and enable **Moni
 - Strict sender authorization and origin binding for every privileged runtime message.
 - Granular local-data deletion, permission-revocation reconciliation, safe selector previews, and explicit visual-monitoring consent.
 - English localization source, keyboard/focus/reduced-motion/forced-color support, deterministic release packages, SBOM, and CI/security gates.
+
+</details>
 
 ## Project layout
 
@@ -239,9 +268,17 @@ Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bo
 
 ## Production status
 
-The repository now contains the complete local release-candidate implementation and enforceable build/test/package pipeline. The short single-browser soak harness, 21-scenario Chrome E2E lane, and Firefox lint/temporary-install smoke are local candidate gates; they are not substitutes for field evidence. Stable publication still depends on real-world evidence and third parties: a retained 24-hour continuous-soak report, the private-beta target, independent security/privacy review, public privacy-policy hosting, signed-package and N-1 upgrade tests, authorized store signing, and Chrome/Firefox store approval. These are tracked in [Release checklist](docs/RELEASE_CHECKLIST.md), [Validation plan](docs/VALIDATION_PLAN.md), and [Roadmap](ROADMAP.md). None of those external gates is claimed complete by this repository or by a local code run.
+The 3.1.4 release passed 562 automated tests, 21 Chrome end-to-end scenarios, Firefox lint and temporary-install checks, and local release integrity checks. Mozilla's package validation reported zero errors and warnings. The public Firefox submission includes the matching source archive, build instructions, privacy policy, and product icon.
+
+Store submission is separate from approval. Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests do not establish universal recovery success across websites.
 
 The current resumable development checkpoint, including its exact green local gates and intentionally unfinished external release work, is recorded in [Checkpoint](docs/CHECKPOINT.md).
+
+## Author and license
+
+Created by **Cameron Amer** · [www.cameronamer.com](https://www.cameronamer.com)
+
+Licensed under the [MIT License](LICENSE).
 
 ## Disclaimer
 
