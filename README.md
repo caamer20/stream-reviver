@@ -175,6 +175,8 @@ Development and beta provenance records the current tree as clean or dirty. Stab
 
 The E2E and soak tests temporarily add only their random localhost origin to a copied manifest because headless Chrome cannot accept an extension permission prompt. They still use production dynamic content-script registration. Release manifests remain optional-permission-only.
 
+The Browser E2E workflow installs Chrome for Testing and uses its explicit binary path for both behavioral and soak tests. Regular Google Chrome 137+ does not support the `--load-extension` flag used by these harnesses. For local runs, set `CHROME_BIN` to a Chrome for Testing or Chromium executable if automatic discovery cannot find one.
+
 ## Load in Chrome
 
 1. Run `npm run build`.

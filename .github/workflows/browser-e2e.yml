@@ -22,13 +22,24 @@ jobs:
       - run: npm ci
       - run: npm run check:toolchain
       - run: npm run build
+      # Branded Chrome 137+ ignores --load-extension. Both harnesses need
+      # Chrome for Testing to load the unpacked extension into an isolated profile.
+      - name: Install Chrome for Testing
+        id: chrome
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4
+        with:
+          chrome-version: stable
+      - name: Report test browser version
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: '"$CHROME_BIN" --version'
       - name: Chromium behavioral scenarios
         env:
-          CHROME_BIN: /usr/bin/google-chrome
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: npm run test:e2e
       - name: Long-lived browser/profile soak smoke
         env:
-          CHROME_BIN: /usr/bin/google-chrome
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: node scripts/soak.mjs --smoke
       - name: Firefox manifest and temporary install
         env:
