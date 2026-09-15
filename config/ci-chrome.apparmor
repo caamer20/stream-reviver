@@ -1,0 +1,10 @@
+# GitHub's Ubuntu runner restricts user namespaces for downloaded browsers.
+# Permit Chrome for Testing to build its sandbox, using the exact path checked
+# in browser-e2e.yml. This profile is installed only in the disposable CI VM.
+# https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
+abi <abi/4.0>,
+include <tunables/global>
+
+profile stream-reviver-chrome /opt/hostedtoolcache/setup-chrome/chrome/stable/x64/chrome flags=(unconfined) {
+  userns,
+}
