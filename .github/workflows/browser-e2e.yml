@@ -10,6 +10,10 @@ jobs:
   browsers:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Ubuntu restricts user namespaces for downloaded browser binaries.
+      # Reuse the runner's installed setuid helper so Chrome keeps its sandbox.
+      CHROME_DEVEL_SANDBOX: /opt/google/chrome/chrome-sandbox
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -32,7 +36,10 @@ jobs:
       - name: Report test browser version
         env:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
-        run: '"$CHROME_BIN" --version'
+        run: |
+          test -x "$CHROME_DEVEL_SANDBOX"
+          test -u "$CHROME_DEVEL_SANDBOX"
+          "$CHROME_BIN" --version
       - name: Chromium behavioral scenarios
         env:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
