@@ -51,7 +51,7 @@
     "@types/chrome": "^0.0.326",
     "@types/node": "^24.3.0",
     "esbuild": "^0.25.9",
-    "typescript": "^5.9.2",
+    "typescript": "^7.0.2",
     "web-ext": "^10.6.0"
   }
 }
