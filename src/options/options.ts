@@ -10,7 +10,7 @@ localizeDocument();
 
 const scalarFields: Array<{ key: keyof GlobalSettings; label: string; type: "checkbox" | "number" }> = [
   ["autoRecover", "Automatic recovery", "checkbox"], ["autoRefresh", "Automatic page refresh", "checkbox"],
-  ["autoMaximize", "Automatic maximize", "checkbox"],
+  ["autoMaximize", "Fullscreen after refresh", "checkbox"],
   ["checkIntervalSeconds", "Check interval (seconds)", "number"], ["healthyCheckIntervalSeconds", "Healthy interval (seconds)", "number"],
   ["suspectCheckIntervalSeconds", "Suspect interval (seconds)", "number"], ["mutationDebounceMs", "DOM debounce (ms)", "number"],
   ["stallTimeoutSeconds", "Stall timeout (seconds)", "number"], ["pageLoadGraceSeconds", "Page-load grace (seconds)", "number"],

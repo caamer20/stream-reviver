@@ -39,6 +39,16 @@ test("per-site settings override global defaults", () => {
   assert.equal(effective.stallTimeoutSeconds, 30);
 });
 
+test("post-refresh fullscreen defaults on and supports global and per-site opt-out", () => {
+  assert.equal(DEFAULT_SETTINGS.autoMaximize, true);
+  assert.equal(normalizeSettings({ autoMaximize: false }).autoMaximize, false);
+  const settings = normalizeSettings({
+    autoMaximize: true,
+    perSite: { "https://example.com": { enabled: true, autoMaximize: false } }
+  });
+  assert.equal(effectiveSettings(settings, "https://example.com").autoMaximize, false);
+});
+
 test("selector strings are trimmed and bounded", () => {
   const settings = normalizeSettings({
     perSite: {

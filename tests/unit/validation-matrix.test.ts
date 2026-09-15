@@ -32,7 +32,7 @@ const validMessages: RuntimeMessage[] = [
     action: "PLAY", actionId: "action", recoveryCycleId: "cycle", failureKind: "DECODE_FREEZE", diagnosis,
     confidence: 90, evidence: [{ signal: "decode-freeze", detail: "Playback stopped", weight: 70 }], risk: 1, score: 10,
     state: "RECOVERING", recoveryAction: "PLAY", streamKind: "CONFIRMED_LIVE", liveIntent: "FOLLOWING_LIVE",
-    liveEdgeLagSeconds: 1, bufferAheadSeconds: 5, circuitState: "VERIFYING", compatibility
+    liveEdgeLagSeconds: 1, bufferAheadSeconds: 5, circuitState: "VERIFYING", compatibility, maximizeOutcome: "CSS_FALLBACK"
   } } },
   { type: "REQUEST_AUTO_REFRESH", origin, pageUrl, reason: "failure", confidence: 90 }, { type: "RECORD_AUTO_REFRESH", origin, pageUrl },
   { type: "AUTHORIZE_RECOVERY_ACTION", origin, pageUrl, recoveryCycleId: "cycle", action: "PLAY", reason: "failure", confidence: 90 },

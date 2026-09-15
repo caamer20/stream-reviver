@@ -218,12 +218,17 @@ async function getContentContext(origin: string, pageUrl: string, navigationId: 
   const siteModel = tabId === undefined ? await getSiteModel(origin) : await recordSessionVisit(origin, tabId);
   const effective = effectiveSettings(settings, origin);
   const entry = tabId === undefined ? undefined : loops[String(tabId)];
+  const pendingMaximizeAt = effective.enabled && effective.siteEnabled && effective.autoMaximize &&
+    recoveryResume && entry?.pendingMaximizeAt && Date.now() - entry.pendingMaximizeAt < MAX_PENDING_AGE
+    ? entry.pendingMaximizeAt : null;
   return {
     acknowledged,
     settings: effective,
-    pendingAutoMaximize: effective.enabled && effective.siteEnabled && effective.autoMaximize &&
-      !!recoveryResume && !!entry?.pendingMaximizeAt &&
-      Date.now() - entry.pendingMaximizeAt < MAX_PENDING_AGE,
+    // Keep the boolean for staged upgrades with an older content bundle. The
+    // absolute deadline lets the current bundle retry a transient lease or
+    // worker wake-up miss without leaving the request armed indefinitely.
+    pendingAutoMaximize: pendingMaximizeAt !== null,
+    pendingAutoMaximizeUntil: pendingMaximizeAt === null ? null : pendingMaximizeAt + MAX_PENDING_AGE,
     preferences: effective.restorePlayerPreferences ? preferences[origin] : undefined,
     snoozedUntil: entry?.snoozedUntil ?? null,
     eventModeUntil: entry?.eventModeUntil ?? null,
@@ -1416,11 +1421,17 @@ async function claimAutoMaximize(sender: chrome.runtime.MessageSender, pageUrl: 
   }
   const cycle = await recoveryCoordinator.getCycle(tabId, recoveryCycleId);
   const active = cycle?.activeActionId ? cycle.actions[cycle.activeActionId] : undefined;
-  const completedPageReload = cycle ? Object.values(cycle.actions).find((action) =>
-    action.action === "PAGE_RELOAD" && action.state === "SUCCEEDED" && action.ownerFrameId === frameId) : undefined;
+  const terminalPageReload = cycle ? Object.values(cycle.actions).find((action) =>
+    action.action === "PAGE_RELOAD" && ["SUCCEEDED", "FAILED"].includes(action.state) &&
+    action.committedAt !== null && action.ownerFrameId === frameId) : undefined;
   const activeResume = cycle?.state === "ACTIVE" && status.recoveryCycleId === recoveryCycleId &&
     active?.action === "PAGE_RELOAD" && active.state === "INITIATED" && active.ownerFrameId === frameId;
-  const completedResume = cycle?.state === "SUCCEEDED" && status.state === "HEALTHY" && !!completedPageReload;
+  // Maximizing is a post-navigation presentation action, not evidence that the
+  // recovery succeeded. A stream that remains broken may fail the old cycle
+  // before the player-discovery dwell elapses, but only a cycle that adopted a
+  // genuinely new document may consume this pending maximize request.
+  const completedResume = !!cycle && ["SUCCEEDED", "FAILED"].includes(cycle.state) &&
+    !!terminalPageReload && status.navigationId !== terminalPageReload.navigationId;
   if (!cycle || cycle.origin !== status.origin || cycle.ownerFrameId !== frameId ||
     cycle.currentUrlKey !== urlKey(pageUrl) || !cycle.navigationIds.includes(status.navigationId) ||
     (!activeResume && !completedResume)) {

@@ -35,6 +35,8 @@ test("settings page offers basic/advanced disclosure and search without removing
   assert.match(source, /OPTIONS_MODE_KEY/);
   assert.match(source, /filterSettings/);
   assert.match(html, /diagnosis-specific, least-disruptive order/);
+  assert.match(html, /<strong>Fullscreen after refresh<\/strong>/);
+  assert.match(html, /id="autoMaximize"[^>]+checked/, "post-refresh fullscreen should be visibly default-on");
 
   const saveSite = source.slice(source.indexOf("async function saveSite"), source.indexOf("function collectSiteOverrides"));
   assert.ok(saveSite.indexOf("collectSiteOverrides") < saveSite.indexOf("ext.permissions.request"), "site drafts must validate before requesting access");

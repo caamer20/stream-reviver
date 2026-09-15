@@ -192,9 +192,23 @@ try {
   });
 
   await setTestSettings(debugPort, origin, { recoveryStrategy: ["PAGE_RELOAD"], errorSelector: "", retryButtonSelector: "" });
-  await scenario(debugPort, "error", 8_000, async (events) => {
+  await scenario(debugPort, "error", 8_000, async (events, target) => {
     assert.equal(events.filter((item) => item.event === "page-reload").length, 1, "loop protection should limit the test to one automatic reload");
+    assert.ok(events.some((item) => item.event === "post-refresh-maximize"), "an automatic reload should trigger the default-on maximize handoff");
+    const maximizeState = await evaluateTarget(target, `({nativeFullscreen:!!document.fullscreenElement,cssMaximized:!!document.querySelector('.stream-reviver-maximized')})`);
+    assert.ok(maximizeState.nativeFullscreen || maximizeState.cssMaximized,
+      `the refreshed stream should be fullscreen or use the safe CSS fallback: ${JSON.stringify(maximizeState)}`);
   });
+
+  await setTestSettings(debugPort, origin, {
+    recoveryStrategy: ["PAGE_RELOAD"], errorSelector: "", retryButtonSelector: "", autoMaximize: false
+  });
+  await scenario(debugPort, "error-maximize-off", 8_000, async (events, target) => {
+    assert.equal(events.filter((item) => item.event === "page-reload").length, 1, "turning off maximize must not disable automatic page recovery");
+    assert.ok(!events.some((item) => item.event === "post-refresh-maximize"), "the per-site opt-out must suppress post-refresh maximize");
+    const maximizeState = await evaluateTarget(target, `({nativeFullscreen:!!document.fullscreenElement,cssMaximized:!!document.querySelector('.stream-reviver-maximized')})`);
+    assert.deepEqual(maximizeState, { nativeFullscreen: false, cssMaximized: false }, "the opt-out must leave the refreshed page layout unchanged");
+  }, "error");
 
   console.log(`Browser E2E: ${executedScenarios} scenario(s) passed with real extension APIs and deterministic local media fixtures.`);
 } catch (error) {
@@ -218,12 +232,12 @@ try {
   await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
 
-async function scenario(debugPort, mode, waitMs, assertion) {
+async function scenario(debugPort, mode, waitMs, assertion, pageMode = mode) {
   if (enabledScenarios.size && !enabledScenarios.has(mode)) return;
   executedScenarios += 1;
   console.log(`→ browser scenario: ${mode}`);
   await clearRuntime(debugPort);
-  const target = await createTarget(debugPort, `${origin}/test-page.html?mode=${mode}`);
+  const target = await createTarget(debugPort, `${origin}/test-page.html?mode=${pageMode}`);
   await wait(waitMs);
   const events = await getHistory(debugPort);
   try { await assertion(events, target); }
@@ -298,6 +312,7 @@ async function setTestSettings(debugPort, siteOrigin, siteOverrides) {
   const globalPatch = {
     enabled: true,
     autoRefresh: true,
+    autoMaximize: true,
     pageLoadGraceSeconds: 0,
     checkIntervalSeconds: 1,
     healthyCheckIntervalSeconds: 2,

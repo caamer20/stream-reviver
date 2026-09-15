@@ -31,7 +31,7 @@
   "popupMonitorSiteHelp": { "message": "Requests access only to this origin" },
   "popupAutoRecover": { "message": "Automatic recovery" },
   "popupAutoRefresh": { "message": "Automatic page reload" },
-  "popupAutoMaximize": { "message": "Auto-maximize" },
+  "popupAutoMaximize": { "message": "Fullscreen after refresh" },
   "popupUseDefault": { "message": "Use default" },
   "popupOnForSite": { "message": "On for this site" },
   "popupOffForSite": { "message": "Off for this site" },

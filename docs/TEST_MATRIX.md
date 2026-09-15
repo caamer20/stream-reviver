@@ -6,7 +6,7 @@
 
 `npm run test:coverage` enforces at least 90% executable lines, 85% branches, and 90% functions. `npm run test:performance` enforces hot-path throughput budgets. `npm run test:accessibility` enforces the static semantic/localization/focus/contrast baseline.
 
-`npm run test:e2e` loads the real Chrome MV3 build in one isolated profile and runs 20 scenarios against deterministic localhost media while using the production runtime-message, optional-permission, dynamic-registration, and background paths:
+`npm run test:e2e` loads the real Chrome MV3 build in one isolated profile and runs 21 scenarios against deterministic localhost media while using the production runtime-message, optional-permission, dynamic-registration, and background paths:
 
 1. popup layout at 390×600, settings navigation, and Mission Control layout/live state;
 2. healthy playback without reload;
@@ -27,7 +27,8 @@
 17. elapsed-time stall detection without premature recovery;
 18. sensitive-dialog configured-control suppression;
 19. configured retry with sustained-success verification and no reload;
-20. page-reload loop protection.
+20. page-reload loop protection plus default-on native/CSS post-refresh maximize;
+21. per-site post-refresh maximize opt-out without disabling automatic recovery.
 
 The reload path additionally has deterministic unit coverage for exact route hashes, primary-frame leases, one-use action nonces, one nonterminal action per tab, settings/control races, content acknowledgement retries, countdown ownership, and fail-closed deadline expiry. The top-frame paint/continuity rule is exercised through the real extension countdown path; a background alarm is never treated as a second navigation executor.
 
@@ -45,4 +46,4 @@ Also test a representative permitted iframe, a sandboxed/cross-origin iframe, a 
 
 ## Release gate
 
-A release candidate is acceptable only when TypeScript, unit/coverage/property tests, performance/accessibility gates, all channel builds, all 20 Chrome scenarios, release checks, Firefox manifest lint, and a Firefox temporary launch pass succeed for the same candidate. Stable publication additionally requires the retained 24-hour soak, beta evidence, independent review, signed-package/N-1 upgrade, and store gates in `docs/RELEASE_CHECKLIST.md`; none is implied by a local green run. Browser console warnings unrelated to extension code should be distinguished from extension errors.
+A release candidate is acceptable only when TypeScript, unit/coverage/property tests, performance/accessibility gates, all channel builds, all 21 Chrome scenarios, release checks, Firefox manifest lint, and a Firefox temporary launch pass succeed for the same candidate. Stable publication additionally requires the retained 24-hour soak, beta evidence, independent review, signed-package/N-1 upgrade, and store gates in `docs/RELEASE_CHECKLIST.md`; none is implied by a local green run. Browser console warnings unrelated to extension code should be distinguished from extension errors.

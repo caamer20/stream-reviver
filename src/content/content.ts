@@ -33,6 +33,10 @@ import { UiLayer } from "./ui";
 
 declare global { interface Window { __streamReviverLoaded?: boolean } }
 
+const POST_REFRESH_MAXIMIZE_WINDOW_MS = 2 * 60_000;
+const AUTO_MAXIMIZE_CLAIM_RETRY_MS = 1_000;
+type MaximizeOutcome = "NATIVE_FULLSCREEN" | "NATIVE_CONTROL" | "CSS_FALLBACK" | "CLICK_PROMPT" | "ALREADY_FULLSCREEN" | "NO_VIDEO";
+
 if (!window.__streamReviverLoaded) {
   window.__streamReviverLoaded = true;
   void bootstrap();
@@ -47,6 +51,7 @@ async function bootstrap(): Promise<void> {
       acknowledged: boolean;
       settings: EffectiveSettings;
       pendingAutoMaximize: boolean;
+      pendingAutoMaximizeUntil?: number | null;
       preferences?: PlayerPreferences;
       snoozedUntil?: number | null;
       eventModeUntil?: number | null;
@@ -56,6 +61,7 @@ async function bootstrap(): Promise<void> {
     }>({ type: "GET_CONTEXT", origin, pageUrl: location.href, navigationId } satisfies RuntimeMessage);
     const monitor = new StreamMonitor(origin, navigationId, context.settings, {
       pendingAutoMaximize: context.pendingAutoMaximize,
+      pendingAutoMaximizeUntil: context.pendingAutoMaximizeUntil ?? null,
       preferences: context.preferences,
       snoozedUntil: context.snoozedUntil ?? null,
       eventModeUntil: context.eventModeUntil ?? null,
@@ -127,6 +133,9 @@ class StreamMonitor {
   private refreshRequested = false;
   private requestSuppressedUntil = 0;
   private pendingAutoMaximize: boolean;
+  private pendingAutoMaximizeUntil: number | null;
+  private pendingAutoMaximizeRecoveryCycleId: string | null;
+  private nextAutoMaximizeClaimAt = 0;
   private maximizeAttempted = false;
   private snoozedUntil: number | null;
   private eventModeUntil: number | null;
@@ -164,13 +173,20 @@ class StreamMonitor {
     private readonly navigationId: string,
     settings: EffectiveSettings,
     context: {
-      pendingAutoMaximize: boolean; preferences?: PlayerPreferences; snoozedUntil: number | null;
+      pendingAutoMaximize: boolean; pendingAutoMaximizeUntil: number | null;
+      preferences?: PlayerPreferences; snoozedUntil: number | null;
       eventModeUntil: number | null; siteModel: LocalSiteModel | null; sessionSnapshot?: PlayerSessionSnapshot;
       recoveryResume: RecoveryResumeContext | null
     }
   ) {
     this.settings = settings;
     this.pendingAutoMaximize = context.pendingAutoMaximize;
+    this.pendingAutoMaximizeUntil = context.pendingAutoMaximize
+      ? context.pendingAutoMaximizeUntil ?? Date.now() + POST_REFRESH_MAXIMIZE_WINDOW_MS
+      : null;
+    this.pendingAutoMaximizeRecoveryCycleId = context.pendingAutoMaximize
+      ? context.recoveryResume?.cycleId ?? null
+      : null;
     this.savedPreferences = context.preferences;
     this.snoozedUntil = context.snoozedUntil;
     this.eventModeUntil = context.eventModeUntil;
@@ -225,13 +241,22 @@ class StreamMonitor {
         this.countdownIdentity = null;
         this.sessionSnapshot = undefined;
         this.pendingAutoMaximize = false;
+        this.pendingAutoMaximizeUntil = null;
+        this.pendingAutoMaximizeRecoveryCycleId = null;
+        this.nextAutoMaximizeClaimAt = 0;
         this.resetRecovery();
         await this.check();
         return { ok: true };
       case "SETTINGS_CHANGED":
         this.settings = message.settings;
         this.candidates.updateDebounce(message.settings.mutationDebounceMs);
-        if (!message.settings.autoMaximize) this.pendingAutoMaximize = false;
+        if (!message.settings.autoMaximize) {
+          this.pendingAutoMaximize = false;
+          this.pendingAutoMaximizeUntil = null;
+          this.pendingAutoMaximizeRecoveryCycleId = null;
+          this.nextAutoMaximizeClaimAt = 0;
+          if (this.cssMaximized) this.exitCssMaximize();
+        }
         if (!message.settings.restorePlayerPreferences) this.sessionSnapshot = undefined;
         // A consumed action must retain its one-use completion identity. New
         // settings gate all future mutations, while this action finishes only
@@ -507,18 +532,39 @@ class StreamMonitor {
     await this.updateWakeLock(assessment.state === "healthy");
 
     const maximizeDiscoveryDwellMs = Math.max(1_500, Math.min(5_000, this.settings.mutationDebounceMs * 3));
+    if (this.pendingAutoMaximize && this.pendingAutoMaximizeUntil !== null &&
+      Date.now() >= this.pendingAutoMaximizeUntil) {
+      this.pendingAutoMaximize = false;
+      this.pendingAutoMaximizeUntil = null;
+      this.pendingAutoMaximizeRecoveryCycleId = null;
+    }
     if (this.settings.enabled && this.settings.siteEnabled && this.settings.autoMaximize &&
       this.pendingAutoMaximize && !this.maximizeAttempted && this.primary &&
-      Date.now() - this.primarySelectedAt >= maximizeDiscoveryDwellMs) {
-      this.maximizeAttempted = true;
-      const recoveryCycleId = (this.recoveryCycleId ?? this.lastCompletedRecoveryCycleId)?.trim();
+      Date.now() - this.primarySelectedAt >= maximizeDiscoveryDwellMs &&
+      Date.now() >= this.nextAutoMaximizeClaimAt) {
+      this.nextAutoMaximizeClaimAt = Date.now() + AUTO_MAXIMIZE_CLAIM_RETRY_MS;
+      // A still-broken stream may start its next recovery cycle before this
+      // discovery dwell elapses. Keep the maximize claim bound to the cycle
+      // that actually performed the reload, never whichever cycle is current.
+      const recoveryCycleId = this.pendingAutoMaximizeRecoveryCycleId?.trim();
       if (recoveryCycleId) {
         const response = await sendMessage<{ claimed: boolean }>({
           type: "CLAIM_AUTO_MAXIMIZE", pageUrl: location.href, recoveryCycleId
         } satisfies RuntimeMessage).catch(() => ({ claimed: false }));
-        if (response.claimed) await this.maximizePrimary(false);
+        if (response.claimed) {
+          this.maximizeAttempted = true;
+          this.pendingAutoMaximize = false;
+          this.pendingAutoMaximizeUntil = null;
+          this.pendingAutoMaximizeRecoveryCycleId = null;
+          const outcome = await this.maximizePrimary(false);
+          await this.log(
+            "post-refresh-maximize",
+            maximizeOutcomeDetail(outcome),
+            outcome === "NO_VIDEO" || outcome === "CLICK_PROMPT" ? "warning" : "success",
+            { recoveryCycleId, maximizeOutcome: outcome }
+          );
+        }
       }
-      this.pendingAutoMaximize = false;
     }
   }
 
@@ -1195,32 +1241,35 @@ class StreamMonitor {
     }
   }
 
-  private async maximizePrimary(manual: boolean): Promise<void> {
+  private async maximizePrimary(manual: boolean): Promise<MaximizeOutcome> {
     const selection = this.candidates.select(this.primary, this.settings, this.recentInteraction, this.frames.getVisibilityFactor());
-    if (!selection.video) { this.ui.toast("No visible video is available to maximize.", "warning"); return; }
+    if (!selection.video) { this.ui.toast("No visible video is available to maximize.", "warning"); return "NO_VIDEO"; }
     if (selection.video !== this.primary) this.setPrimary(selection.video, selection.score, selection.label);
     const video = selection.video;
-    try { await video.requestFullscreen(); return; } catch { /* expected without a user gesture */ }
+    if (document.fullscreenElement) return "ALREADY_FULLSCREEN";
+    try { await video.requestFullscreen(); return "NATIVE_FULLSCREEN"; } catch { /* expected without a user gesture */ }
     if (this.settings.attemptNativeFullscreenClick) {
       const discovery = this.findFullscreenButton(video);
       if (discovery.kind === "found") {
         discovery.button.click();
         await delay(350);
-        if (document.fullscreenElement) return;
+        if (document.fullscreenElement) return "NATIVE_CONTROL";
       } else if (discovery.kind === "ambiguous") {
         this.promptForSafeFullscreen(video, "Multiple fullscreen controls were found — click to maximize safely");
-        return;
+        return "CLICK_PROMPT";
       }
     }
     if (window.top !== window) await sendMessage({ type: "REQUEST_PARENT_MAXIMIZE" } satisfies RuntimeMessage).catch(() => undefined);
     if (this.settings.useCssMaximizeFallback) {
       this.applyCssMaximize(this.findVideoContainer(video));
       this.ui.toast("Browser fullscreen was blocked; using page maximize instead.", "info");
+      return "CSS_FALLBACK";
     } else {
       await this.report("MAXIMIZE_BLOCKED", "Browser requires a click before entering fullscreen", 0, [], true);
       this.ui.prompt(manual ? "Click to maximize stream" : "Fullscreen blocked — click to maximize", () => {
         void video.requestFullscreen().catch(() => this.ui.toast("Fullscreen is not available for this player.", "warning"));
       });
+      return "CLICK_PROMPT";
     }
   }
 
@@ -1386,7 +1435,9 @@ class StreamMonitor {
         const track = [...video.textTracks][0];
         if (track) track.mode = "showing";
       }
-      if (preferences.cssMaximized && this.settings.useCssMaximizeFallback) this.applyCssMaximize(this.findVideoContainer(video));
+      if (preferences.cssMaximized && this.settings.autoMaximize && this.settings.useCssMaximizeFallback) {
+        this.applyCssMaximize(this.findVideoContainer(video));
+      }
     } catch { /* player rejected a preference */ }
   }
 
@@ -1420,7 +1471,7 @@ class StreamMonitor {
         video.currentTime = Math.max(0, video.seekable.end(video.seekable.length - 1) - 1);
       }
       if (snapshot.wasPlaying && !this.userPaused) await this.requestPlayback(video);
-      if (!snapshot.cssMaximized) window.scrollTo(snapshot.scrollX, snapshot.scrollY);
+      if (!snapshot.cssMaximized || !this.settings.autoMaximize) window.scrollTo(snapshot.scrollX, snapshot.scrollY);
       if (snapshot.pictureInPicture) this.ui.prompt("Restore Picture-in-Picture", () => void (video as any).requestPictureInPicture?.());
       this.sessionSnapshot = undefined;
       await sendMessage({
@@ -1601,6 +1652,16 @@ function recoveryLabel(action: RecoveryAction): string {
     MEDIA_RELOAD: "reload media element", IFRAME_RELOAD: "reload player frame", PAGE_RELOAD: "reload page",
     BACKUP_HANDOFF: "offer the configured backup stream"
   } satisfies Record<RecoveryAction, string>)[action];
+}
+function maximizeOutcomeDetail(outcome: MaximizeOutcome): string {
+  return ({
+    NATIVE_FULLSCREEN: "Restored native player fullscreen after the automatic page refresh",
+    NATIVE_CONTROL: "Restored fullscreen through the player control after the automatic page refresh",
+    CSS_FALLBACK: "Browser fullscreen required a user gesture; restored the viewport-filling player instead",
+    CLICK_PROMPT: "Browser fullscreen requires a user click after the automatic page refresh",
+    ALREADY_FULLSCREEN: "The player was already fullscreen after the automatic page refresh",
+    NO_VIDEO: "The refreshed page did not expose a visible video to maximize"
+  } satisfies Record<MaximizeOutcome, string>)[outcome];
 }
 function selectorLabel(field: SelectorField): string {
   return ({

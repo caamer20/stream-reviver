@@ -280,7 +280,8 @@ function historyMetadata(value: unknown): ValidationResult {
   if (!isRecord(value)) return invalid("History metadata must be a plain object");
   const fields = [
     "action", "actionId", "recoveryCycleId", "failureKind", "diagnosis", "confidence", "evidence", "risk", "score", "state",
-    "recoveryAction", "streamKind", "liveIntent", "liveEdgeLagSeconds", "bufferAheadSeconds", "circuitState", "compatibility"
+    "recoveryAction", "streamKind", "liveIntent", "liveEdgeLagSeconds", "bufferAheadSeconds", "circuitState", "compatibility",
+    "maximizeOutcome"
   ] as const;
   const shape = exact(value, fields);
   if (!shape.ok) return shape;
@@ -290,7 +291,8 @@ function historyMetadata(value: unknown): ValidationResult {
     score: (item) => number(item, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER), state: monitorState,
     recoveryAction: (item) => nullable(item, recoveryAction), streamKind, liveIntent,
     liveEdgeLagSeconds: (item) => nullableNumber(item, 0, 10 * 366 * 24 * 60 * 60),
-    bufferAheadSeconds: (item) => nullableNumber(item, 0, 10 * 366 * 24 * 60 * 60), circuitState, compatibility
+    bufferAheadSeconds: (item) => nullableNumber(item, 0, 10 * 366 * 24 * 60 * 60), circuitState, compatibility,
+    maximizeOutcome: (item) => oneOf(item, ["NATIVE_FULLSCREEN", "NATIVE_CONTROL", "CSS_FALLBACK", "CLICK_PROMPT", "ALREADY_FULLSCREEN", "NO_VIDEO"])
   };
   return all(...fields.map((key) => hasOwn(value, key) ? validators[key]!(value[key]) : valid()));
 }

@@ -6,7 +6,7 @@
 - [ ] Working tree is completely clean, including untracked files; the source allowlist contains only intended Git-tracked regular files and no symlink/submodule.
 - [ ] Node 24.2.0/npm 11.4.2 are active; `npm ci`, `npm run check:toolchain`, and `npm run audit:runtime` pass.
 - [ ] `npm run release:check` passes release-policy tests, coverage, performance, accessibility, stable provenance, permissions, CSP, network-code, and size checks.
-- [ ] `npm run test:e2e` passes all 20 Chrome behavioral scenarios, including popup/settings/Mission Control navigation and layout.
+- [ ] `npm run test:e2e` passes all 21 Chrome behavioral scenarios, including popup/settings/Mission Control navigation and layout plus post-refresh fullscreen/default opt-out behavior.
 - [ ] `npm run lint:firefox` passes Mozilla lint and `npm run test:firefox` passes a temporary Firefox installation smoke.
 - [ ] `npm run test:soak:smoke` passes its one-browser/profile resource and false-recovery guards before extended soak; retain `artifacts/soak-report.json`.
 - [ ] `npm run package:tagged` produces Chrome, Firefox, allowlisted tracked source, CycloneDX 1.6 SBOM, and SHA-256 release metadata.

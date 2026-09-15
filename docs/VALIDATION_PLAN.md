@@ -10,7 +10,7 @@
 
 These are release targets, not a claimed universal success percentage.
 
-Before beginning field validation, retain a green candidate log for the full automated gate: the unit/property/coverage/performance/accessibility/security suite, all 20 real-Chrome scenarios, Mozilla lint plus Firefox temporary-install smoke, deterministic packages/reproducibility, and the short one-browser/profile soak. These establish that the candidate and evidence harnesses work; they do not satisfy the 24-hour or beta gates below.
+Before beginning field validation, retain a green candidate log for the full automated gate: the unit/property/coverage/performance/accessibility/security suite, all 21 real-Chrome scenarios, Mozilla lint plus Firefox temporary-install smoke, deterministic packages/reproducibility, and the short one-browser/profile soak. These establish that the candidate and evidence harnesses work; they do not satisfy the 24-hour or beta gates below.
 
 ## 24-hour soak
 

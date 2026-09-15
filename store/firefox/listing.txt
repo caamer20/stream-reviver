@@ -10,7 +10,16 @@ Other, Tabs
 DATA COLLECTION
 Required: none. Stream Reviver does not transmit analytics, technical data, browsing activity, or personal information.
 
+WEBSITE
+https://www.cameronamer.com
+
+SOURCE PROJECT
+https://github.com/caamer20/stream-reviver
+
 REVIEW NOTES
 Use docs/REVIEWER_GUIDE.md and the generated local fixture. The MV3 Gecko manifest declares data_collection_permissions.required = ["none"]. Optional site access is requested one origin at a time.
 The standard alarms permission is used only for one-shot recovery/countdown deadlines that must survive non-persistent background suspension; it grants no site access and is not used for tracking.
 Optional visual sampling is separately acknowledged, restricted to the elected player in the active visible top-level tab, and processed ephemerally in the privileged background. Only a fixed comparison hash reaches the requesting content script; no image bytes are stored, returned, or transmitted externally.
+
+VERSION 3.1.4 NOTES
+Adds default-on fullscreen restoration after an automatic page refresh. Users can turn it off globally or per site. Native fullscreen is attempted first; browser security restrictions fall back to the reversible viewport-filling mode or a user-click prompt. The post-refresh request remains bound to the exact recovery transaction, retries transient startup races for a bounded period, and never treats maximize as proof that playback recovered.

@@ -23,7 +23,7 @@ Copy this file to the private release-evidence archive for every beta or stable 
 - [ ] Accessibility/static localization gate
 - [ ] Release-integrity and no-egress fixtures
 - [ ] Stable build and release validation
-- [ ] All 20 Chrome real-extension scenarios
+- [ ] All 21 Chrome real-extension scenarios
 - [ ] Firefox lint and temporary-install smoke
 - [ ] Long-lived single-browser/profile soak smoke
 - [ ] Two-workspace reproducibility

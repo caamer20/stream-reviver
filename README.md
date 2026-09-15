@@ -1,8 +1,46 @@
-# Stream Reviver 3.1
+<div align="center">
 
-Stream Reviver is a privacy-first Chrome and Firefox extension that detects, explains, and safely recovers live-stream failures. It is generic and opt-in: it has no hardcoded streaming sites, analytics, trackers, remote code, or external API calls. A site is monitored only after the user acknowledges the disclaimer, enables that exact origin, and grants that origin permission.
+# Stream Reviver
 
-Version 3 moves beyond a simple stall timer. It keeps a rolling observation window, classifies the failure type, selects a failure-specific recovery policy, verifies that each action actually restored sustained playback, and opens a circuit breaker when safe actions are exhausted.
+**A privacy-first recovery assistant for live video streams.**
+
+[![Version](https://img.shields.io/badge/version-3.1.4-6d5dfc)](package.json)
+[![Manifest](https://img.shields.io/badge/Manifest-V3-00a67d)](https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/manifest.json/manifest_version)
+[![Chrome and Firefox](https://img.shields.io/badge/browsers-Chrome%20%7C%20Firefox-2563eb)](#install-for-local-development)
+[![Privacy](https://img.shields.io/badge/analytics-none-00a67d)](docs/PRIVACY.md)
+[![License](https://img.shields.io/badge/license-MIT-334155)](LICENSE)
+[![CI](https://github.com/caamer20/stream-reviver/actions/workflows/ci.yml/badge.svg)](https://github.com/caamer20/stream-reviver/actions/workflows/ci.yml)
+
+[Website](https://www.cameronamer.com) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Privacy](docs/PRIVACY.md) · [Roadmap](ROADMAP.md)
+
+</div>
+
+Stream Reviver detects, explains, and safely recovers live-stream failures in Chrome and Firefox. It is generic and opt-in: there are no hardcoded streaming sites, analytics, trackers, remote code, or extension-originated external API calls. Monitoring begins only after the user acknowledges the disclaimer, enables an exact origin, and grants that origin permission.
+
+Unlike a simple stall timer, Stream Reviver uses a rolling observation window, typed failure classification, a least-disruptive recovery policy, sustained-playback verification, and a circuit breaker. It can retry playback, return to the live edge, use a configured player control, reload a failed page with a cancelable countdown, and restore fullscreen or a safe viewport-filling fallback afterward.
+
+## Highlights
+
+| Capability | Behavior |
+| --- | --- |
+| Conservative detection | Requires sustained, corroborated failure evidence and protects manual pauses, hidden tabs, access interruptions, ads, offline periods, and intentional DVR rewind. |
+| Safe recovery | Starts with low-risk actions, verifies the result, limits retries, and keeps full-page reload as the final automatic step. |
+| Fullscreen after refresh | Enabled by default, configurable globally or per site, and falls back gracefully when browsers require a user gesture. |
+| Exact-origin access | Requests only the site the user enables; no persistent broad host permission is shipped. |
+| Local-first privacy | Settings, diagnostics, outcome models, and recovery state stay inside browser storage. |
+| Cross-browser delivery | One TypeScript codebase produces Chrome MV3 and Firefox MV3 builds with channel-specific manifests. |
+
+## Install for local development
+
+```bash
+npm install
+npm run build
+```
+
+- Chrome: open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select `dist/chrome`.
+- Firefox: open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `dist/firefox/manifest.json`.
+
+After installation, acknowledge the disclaimer, open a stream, and enable **Monitor this site** from the popup. See the detailed [Chrome](#load-in-chrome) and [Firefox](#load-in-firefox) instructions below.
 
 ## What is implemented
 
@@ -17,7 +55,7 @@ Version 3 moves beyond a simple stall timer. It keeps a rolling observation wind
 - Recovery from soft to disruptive: wait, prompt, play, jump live, rediscover, configured retry, media reload, iframe reload, top-page reload, and explicit backup handoff.
 - Cancelable/extendable top-frame reload countdown plus persistent reload-loop protection in session storage. The continuously painted in-page countdown is the only automatic reload executor; a background alarm can only fail closed and cancel a stale deadline.
 - State restoration for volume, mute, rate, captions, VOD position/live intent, scroll, CSS maximize, and a Picture-in-Picture prompt.
-- Native fullscreen, a user-configured native control, reversible CSS maximize, and user-gesture prompts when browser policy blocks fullscreen.
+- Default-on fullscreen restoration after an automatic page refresh, with a global/per-site opt-out, one-use recovery binding, bounded claim retries, a user-configured native control, reversible CSS maximize, and a click prompt when browser policy requires a user gesture.
 - Optional, data-minimized MAIN-world bridge for aggregate MSE, hls.js, dash.js, and WebRTC health signals.
 - Optional visual watchdog for top-level players. The privileged background crops and reduces an active-tab capture to a fixed 64-bit comparison hash, discards the capture, returns no image bytes to page-facing code, and never recovers from visual evidence alone.
 - Event mode with faster healthy checks, screen wake lock when available, and best-effort tab discard protection.
@@ -93,7 +131,7 @@ npm run verify:reproducible
 - `npm run check`: strict TypeScript check.
 - `npm test`: deterministic unit/integration tests.
 - `npm run build`: produces both browser builds and the fixture.
-- `npm run test:e2e`: launches an isolated Chrome profile and runs 20 deterministic real-extension scenarios, including popup/options/Mission Control layout and navigation, lifecycle reinjection, open-shadow and nested-frame discovery, elapsed-time stall detection, protected-state suppression, soft recovery, and reload-loop protection.
+- `npm run test:e2e`: launches an isolated Chrome profile and runs 21 deterministic real-extension scenarios, including popup/options/Mission Control layout and navigation, lifecycle reinjection, open-shadow and nested-frame discovery, elapsed-time stall detection, protected-state suppression, soft recovery, reload-loop protection, and default-on/opt-out post-refresh maximize behavior.
 - `npm run build:channels`: produces isolated Development, Beta, and Stable Chrome/Firefox builds; stable and beta omit source maps.
 - `npm run test:coverage`: enforces 90% lines, 85% branches, and 90% functions against executable test bundles.
 - `npm run test:performance`: enforces conservative throughput budgets for hot-path pure logic.
@@ -201,7 +239,7 @@ Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bo
 
 ## Production status
 
-The repository now contains the complete local release-candidate implementation and enforceable build/test/package pipeline. The short single-browser soak harness, 20-scenario Chrome E2E lane, and Firefox lint/temporary-install smoke are local candidate gates; they are not substitutes for field evidence. Stable publication still depends on real-world evidence and third parties: a retained 24-hour continuous-soak report, the private-beta target, independent security/privacy review, public privacy-policy hosting, signed-package and N-1 upgrade tests, authorized store signing, and Chrome/Firefox store approval. These are tracked in [Release checklist](docs/RELEASE_CHECKLIST.md), [Validation plan](docs/VALIDATION_PLAN.md), and [Roadmap](ROADMAP.md). None of those external gates is claimed complete by this repository or by a local code run.
+The repository now contains the complete local release-candidate implementation and enforceable build/test/package pipeline. The short single-browser soak harness, 21-scenario Chrome E2E lane, and Firefox lint/temporary-install smoke are local candidate gates; they are not substitutes for field evidence. Stable publication still depends on real-world evidence and third parties: a retained 24-hour continuous-soak report, the private-beta target, independent security/privacy review, public privacy-policy hosting, signed-package and N-1 upgrade tests, authorized store signing, and Chrome/Firefox store approval. These are tracked in [Release checklist](docs/RELEASE_CHECKLIST.md), [Validation plan](docs/VALIDATION_PLAN.md), and [Roadmap](ROADMAP.md). None of those external gates is claimed complete by this repository or by a local code run.
 
 The current resumable development checkpoint, including its exact green local gates and intentionally unfinished external release work, is recorded in [Checkpoint](docs/CHECKPOINT.md).
 

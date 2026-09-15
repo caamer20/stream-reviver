@@ -21,7 +21,7 @@ const selectorKeys = new Set([
 ]);
 const urlListKeys = new Set(["backupUrls", "includeUrlPatterns", "excludeUrlPatterns"]);
 const safeMetadataKeys = new Set([
-  "action", "failureKind", "recoveryCycleId", "circuitState", "confidence", "score", "success", "durationMs",
+  "action", "failureKind", "recoveryCycleId", "circuitState", "confidence", "score", "success", "durationMs", "maximizeOutcome",
   "streamKind", "liveIntent", "playerType", "attempt", "attempts", "limit", "reasonCode"
 ]);
 
