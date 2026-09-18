@@ -13,6 +13,8 @@
 [![License](https://img.shields.io/badge/license-MIT-334155)](LICENSE)
 [![CI](https://github.com/caamer20/stream-reviver/actions/workflows/ci.yml/badge.svg)](https://github.com/caamer20/stream-reviver/actions/workflows/ci.yml)
 
+**[Install for Firefox](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/)**
+
 [Website](https://www.cameronamer.com) · [Getting started](#getting-started) · [Documentation](#documentation) · [Changelog](CHANGELOG.md)
 
 </div>
@@ -23,7 +25,7 @@ Built for Chrome and Firefox, with no analytics, advertising, remote code, or ex
 
 ## Getting started
 
-**Firefox:** Version 3.1.4 was submitted to Mozilla for public listing on September 15, 2026. At submission, it was awaiting review; approval and publication are controlled by Mozilla. [Firefox listing](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/).
+**Firefox:** [Install Stream Reviver from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Version 3.1.4 is available for Firefox desktop 142 and later.
 
 For local installation in Chrome or Firefox, follow the [development setup](#install-for-local-development) below. Once installed:
 
@@ -272,7 +274,7 @@ Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bo
 
 The 3.1.4 release passed 562 automated tests, 21 Chrome end-to-end scenarios, Firefox lint and temporary-install checks, and local release integrity checks. Mozilla's package validation reported zero errors and warnings. The public Firefox submission includes the matching source archive, build instructions, privacy policy, and product icon.
 
-Store submission is separate from approval. Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests do not establish universal recovery success across websites.
+Version 3.1.4 is published on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests do not establish universal recovery success across websites.
 
 The current resumable development checkpoint, including its exact green local gates and intentionally unfinished external release work, is recorded in [Checkpoint](docs/CHECKPOINT.md).
 
