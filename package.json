@@ -50,7 +50,7 @@
   "devDependencies": {
     "@types/chrome": "^0.2.9",
     "@types/node": "^24.3.0",
-    "esbuild": "^0.25.9",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.2",
     "web-ext": "^10.6.0"
   }
