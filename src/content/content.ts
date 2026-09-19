@@ -59,6 +59,10 @@ async function bootstrap(): Promise<void> {
       sessionSnapshot?: PlayerSessionSnapshot;
       recoveryResume?: RecoveryResumeContext | null;
     }>({ type: "GET_CONTEXT", origin, pageUrl: location.href, navigationId } satisfies RuntimeMessage);
+    if (!context.settings.siteEnabled) {
+      window.__streamReviverLoaded = false;
+      return;
+    }
     const monitor = new StreamMonitor(origin, navigationId, context.settings, {
       pendingAutoMaximize: context.pendingAutoMaximize,
       pendingAutoMaximizeUntil: context.pendingAutoMaximizeUntil ?? null,
@@ -227,7 +231,10 @@ class StreamMonitor {
     window.addEventListener("online", this.onNetworkChange);
     window.addEventListener("offline", this.onNetworkChange);
     window.addEventListener("message", this.onProtocolMessage);
-    window.addEventListener("pagehide", this.onPageHide);
+    // The browser owns document teardown. A pagehide listener can itself be
+    // interrupted as Firefox discards the content-script sandbox. Retain the
+    // monitor for back/forward-cache restores; explicitly destroy only when
+    // shutting down monitoring in a still-live document.
     void this.check();
   }
 
@@ -1582,12 +1589,6 @@ class StreamMonitor {
     };
   };
 
-  private readonly onPageHide = (event: PageTransitionEvent): void => {
-    // A back-forward-cache page is frozen and later resumed with the same JS
-    // realm. Keeping the monitor intact avoids a permanently inert restored page.
-    if (!event.persisted) this.destroy();
-  };
-
   private readonly destroy = (): void => {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -1604,7 +1605,6 @@ class StreamMonitor {
     window.removeEventListener("online", this.onNetworkChange);
     window.removeEventListener("offline", this.onNetworkChange);
     window.removeEventListener("message", this.onProtocolMessage);
-    window.removeEventListener("pagehide", this.onPageHide);
     if (this.wakeLock) void this.wakeLock.release().catch(() => undefined);
   };
 }

@@ -54,3 +54,21 @@ jobs:
         env:
           FIREFOX_BIN: /usr/bin/firefox
         run: npm run test:firefox
+      - name: Install geckodriver
+        uses: browser-actions/setup-geckodriver@fac5b0424c584257f32cf12c5eb4ba86014c34f8
+        with:
+          geckodriver-version: 0.37.1
+      - name: Firefox behavioral scenarios
+        env:
+          FIREFOX_BIN: /usr/bin/firefox
+        run: npm run test:firefox:e2e
+      - name: Retain browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-evidence-${{ github.sha }}
+          path: |
+            artifacts/soak-report.json
+            artifacts/firefox-e2e-report.json
+          if-no-files-found: warn
+          retention-days: 90

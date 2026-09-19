@@ -38,6 +38,11 @@ for (const message of extensionMessages.slice(0, 12)) test(`content sender is de
 for (const message of contentMessages.filter((message) => message.type !== "LOG_HISTORY").slice(0, 8)) test(`extension page is denied content-only ${message.type}`, () => assert.equal(authorizeRuntimeMessage(message, extension).ok, false));
 
 test("content sender cannot claim a different origin", () => assert.equal(authorizeRuntimeMessage({ type: "GET_CONTEXT", origin: "https://evil.example", pageUrl, navigationId: "navigation" }, content).ok, false));
+test("shared browser host access does not authorize another port's context", () => {
+  const sender = { ...content, senderUrl: "http://localhost:8080/live" };
+  assert.equal(authorizeRuntimeMessage({ type: "GET_CONTEXT", origin: "http://localhost:9090", pageUrl: "http://localhost:9090/live", navigationId: "navigation" }, sender).ok, false);
+  assert.equal(authorizeRuntimeMessage({ type: "GET_CONTEXT", origin: "http://localhost:8080", pageUrl: "http://localhost:8080/live", navigationId: "navigation" }, sender).ok, true);
+});
 test("content sender cannot claim a cross-origin URL", () => assert.equal(authorizeRuntimeMessage({ type: "PLAYBACK_SUCCESS", pageUrl: "https://evil.example/live" }, content).ok, false));
 test("cycle-scoped auto-maximize claims remain bound to the sender URL", () => assert.equal(authorizeRuntimeMessage({
   type: "CLAIM_AUTO_MAXIMIZE", pageUrl: "https://evil.example/live", recoveryCycleId: "cycle"

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createDeterministicZip } from "./deterministic-zip.mjs";
 import {
@@ -28,8 +29,9 @@ const buildProvenance = JSON.parse(await readFile(path.join(stableRoot, "provena
 assertBuildIdentity(buildProvenance, expectedIdentity, "stable build provenance");
 
 const artifacts = path.join(root, "artifacts");
-await rm(artifacts, { recursive: true, force: true });
 await mkdir(artifacts, { recursive: true });
+const artifactDirectory = await lstat(artifacts);
+assert.ok(artifactDirectory.isDirectory() && !artifactDirectory.isSymbolicLink(), "Artifact output must be a real directory");
 
 const sourceFiles = await collectTrackedSource(root, repository.entries);
 const archiveSpecs = [
@@ -41,7 +43,7 @@ const releases = {};
 for (const spec of archiveSpecs) {
   const entries = spec.entries.map((entry) => ({ ...entry, name: `${spec.prefix}${entry.name}` }));
   const bytes = createDeterministicZip(entries);
-  await writeFile(path.join(artifacts, spec.name), bytes);
+  await writeArtifact(spec.name, bytes);
   releases[spec.name] = { bytes: bytes.length, sha256: sha256(bytes), content: canonicalDigest(entries) };
 }
 
@@ -49,9 +51,9 @@ const lock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "ut
 const sbom = createSbom({ packageJson, lock, provenance: buildProvenance, releases });
 const sbomName = `stream-reviver-${version}-sbom.cdx.json`;
 const sbomBytes = Buffer.from(`${JSON.stringify(sbom, null, 2)}\n`);
-await writeFile(path.join(artifacts, sbomName), sbomBytes);
+await writeArtifact(sbomName, sbomBytes);
 const releaseTag = expectedReleaseTag() ?? (repository.tags.includes(`v${version}`) ? `v${version}` : null);
-await writeFile(path.join(artifacts, "release-manifest.json"), `${JSON.stringify({
+await writeArtifact("release-manifest.json", `${JSON.stringify({
   schemaVersion: 2,
   version,
   channel: "stable",
@@ -67,6 +69,16 @@ await writeFile(path.join(artifacts, "release-manifest.json"), `${JSON.stringify
   sbom: { name: sbomName, bytes: sbomBytes.length, sha256: sha256(sbomBytes) }
 }, null, 2)}\n`);
 console.log(`Created verified deterministic Chrome, Firefox, and tracked-source archives in ${path.relative(root, artifacts)}.`);
+
+async function writeArtifact(name, bytes) {
+  // Never follow an existing output symlink. Atomic replacement also prevents
+  // an interrupted packaging run from leaving a partially written archive.
+  const temporary = path.join(artifacts, `.package-${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, bytes, { flag: "wx" });
+    await rename(temporary, path.join(artifacts, name));
+  } finally { await unlink(temporary).catch(error => { if (error.code !== "ENOENT") throw error; }); }
+}
 
 async function collectOutput(directory) {
   const base = path.resolve(directory);

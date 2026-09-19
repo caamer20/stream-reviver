@@ -1,7 +1,13 @@
 export const ext = ((globalThis as any).browser ?? (globalThis as any).chrome) as typeof chrome;
 import { isRuntimeMessage } from "./validation";
+import { browserOriginPattern, hasOtherEnabledOriginSharingPermission } from "./origin-permissions";
 
 const usesPromises = typeof (globalThis as any).browser !== "undefined";
+declare const __TARGET_BROWSER__: "chrome" | "firefox";
+// Modern Chromium can expose the promise-based `browser` namespace too.
+// Permission syntax is a build target property, not an API-style property.
+const permissionBrowser = typeof __TARGET_BROWSER__ !== "undefined" ? __TARGET_BROWSER__
+  : typeof (ext?.runtime as any)?.getBrowserInfo === "function" ? "firefox" : "chrome";
 
 export function apiCall<T>(method: (...args: any[]) => any, context: unknown, ...args: any[]): Promise<T> {
   if (usesPromises) {
@@ -80,12 +86,9 @@ export function getOrigin(url?: string): string | null {
 }
 
 export function originPattern(origin: string): string | null {
-  if (origin === "file://") return "file:///*";
-  try {
-    const parsed = new URL(origin);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    return `${parsed.protocol}//${parsed.host}/*`;
-  } catch {
-    return null;
-  }
+  return browserOriginPattern(origin, permissionBrowser);
+}
+
+export function sharesEnabledOriginPermission(sites: Record<string, { enabled?: boolean }>, origin: string): boolean {
+  return hasOtherEnabledOriginSharingPermission(sites, origin, permissionBrowser);
 }

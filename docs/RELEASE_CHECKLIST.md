@@ -4,10 +4,11 @@
 
 - [ ] `HEAD`, the `vX.Y.Z` release tag, `package.json` version, generated manifests, build provenance, and browser `build-info.json` all identify the same release.
 - [ ] Working tree is completely clean, including untracked files; the source allowlist contains only intended Git-tracked regular files and no symlink/submodule.
-- [ ] Node 24.2.0/npm 11.4.2 are active; `npm ci`, `npm run check:toolchain`, and `npm run audit:runtime` pass.
+- [ ] Node 24.2.0/npm 11.4.2 are active; `npm ci`, `npm run check:toolchain`, and `npm run audit:dependencies` pass (including development dependencies).
 - [ ] `npm run release:check` passes release-policy tests, coverage, performance, accessibility, stable provenance, permissions, CSP, network-code, and size checks.
 - [ ] `npm run test:e2e` passes all 21 Chrome behavioral scenarios, including popup/settings/Mission Control navigation and layout plus post-refresh fullscreen/default opt-out behavior.
 - [ ] `npm run lint:firefox` passes Mozilla lint and `npm run test:firefox` passes a temporary Firefox installation smoke.
+- [ ] `npm run test:firefox:e2e` passes Firefox settings, playback/pause, fullscreen/opt-out, sibling-port isolation, and shared-permission lifecycle checks; retain its JSON report.
 - [ ] `npm run test:soak:smoke` passes its one-browser/profile resource and false-recovery guards before extended soak; retain `artifacts/soak-report.json`.
 - [ ] `npm run package:tagged` produces Chrome, Firefox, allowlisted tracked source, CycloneDX 1.6 SBOM, and SHA-256 release metadata.
 - [ ] `npm run verify:reproducible -- --require-tag` proves two independent clean-workspace builds match the normal package and writes `artifacts/reproducibility.json`.

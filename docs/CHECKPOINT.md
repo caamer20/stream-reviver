@@ -1,67 +1,42 @@
-# Resumable development checkpoint
+# Release checkpoint — 3.1.5
 
-Date: 2026-08-30  
-Version: 3.1.3  
-State: locally working development candidate; intentionally not a stable/publication claim
+Date: 2026-09-19. This is an engineering release candidate, not a claim that every production-readiness gate is complete.
 
-## Safe stopping point
+## Changes
 
-The current source is a coherent, runnable checkpoint. Chrome and Firefox development builds are present under `dist/chrome` and `dist/firefox`, the UI opens at its intended size, the local recovery fixture works, and the final source passed the automated browser gates listed below. No additional implementation is required to load and use the extension locally.
+- Firefox custom-port host permission and registration fixes, with exact-origin monitoring and optional player-bridge isolation.
+- Shared Firefox grants remain until the last enabled sibling origin is disabled.
+- Full dependency audit includes development tools; the former linter exception is closed.
+- Packaging retains older archives and test evidence, atomically replaces owned output files, and compares only the validated current release inventory for reproducibility.
+- A geckodriver lane exercises Firefox behavior and supports signed installation and N-1 upgrades. GitHub Actions retains browser evidence for 90 days.
 
-The complete checkpoint is intended to be preserved in Git before any signing build is produced. Stable provenance correctly rejects dirty or untracked source, so later edits must be committed and the full gate rerun before packaging. No permission expansion or public publication is implied by this checkpoint.
+## Verification and retained evidence
 
-## Final local verification
-
-The following checks passed against this checkpoint:
-
-- `npm run check`
-- `npm test` — 561/561 tests
-- `npm run test:coverage` — 97.55% lines, 86.89% branches, 96.49% functions
-- `npm run test:accessibility`
-- `npm run test:performance`
-- `npm run test:release-integrity`
-- `npm run build` — Chrome, Firefox, and the local fixture
-- `node scripts/release-check.mjs` — 60 generated development files validated
-- `npm run lint:firefox` — 0 errors, 0 warnings, 0 notices
-- `npm run test:firefox` — temporary add-on installed successfully in local Firefox
-- `npm run test:e2e` — 20/20 real-Chrome extension scenarios
-- `npm run test:soak:smoke` — 1 long-lived browser cycle, 4/4 scenarios; report at `artifacts/soak-report.json`
-- `git diff --check`
-
-## Recovery safety boundary at this checkpoint
-
-- The elected player, exact top-level route (including query and fragment), recovery cycle, action, and one-use nonce bind every automatic page reload.
-- Only a visible, continuously painted, responsive top-frame countdown can commit the reload at its exact coordinator deadline.
-- Iframe countdowns and delayed background alarms cannot reload the top page. The alarm is watchdog-only and cancels stale work.
-- Cross-origin embedded recovery requires both the top and child origins to be explicitly enabled and permitted.
-- A tab can have only one nonterminal recovery action. Settings changes, disable/reset/snooze operations, worker restarts, frame-ID reuse, and content acknowledgement retries fail closed.
-- Automatic maximize and playback-state restoration obey their current settings at context creation, claim, capture, delivery, and execution boundaries.
-- Automatic iframe reload remains disabled until replacement-frame identity can be proven safely.
-
-## Resume here
-
-Start the next session by reading this file and running:
+Use the immutable version tag and its GitHub release assets as the source of final release provenance. Do not treat a pre-commit development report as tagged release evidence.
 
 ```bash
-npm install
-npm run build
+npm ci
 npm run check
-npm test
+npm run test:coverage
+npm run test:e2e
+npm run test:firefox
+npm run test:firefox:e2e
+npm run test:soak:smoke
+npm run package:tagged
+npm run verify:reproducible -- --require-tag
 ```
 
-Then review `git status --short` and the diff before making further changes. The most useful next milestone is release-candidate preparation: run the clean-tree tagged/reproducibility gates and test the signed package upgrade path. Avoid adding more features before that baseline is preserved.
+The local candidate passed 569 unit/property tests; Firefox's 10 behavioral checks include settings persistence, healthy playback, pause protection, fullscreen restoration/opt-out, unenabled sibling-port isolation, and shared-grant revocation. The full clean-tree release gate must run again after the final commit.
 
-## Intentionally unfinished production gates
+`artifacts/release-manifest.json` binds version, tag, commit, archives, source, SBOM, and hashes. `artifacts/reproducibility.json` records independent clean-build comparison. `artifacts/firefox-e2e-report.json` and `artifacts/soak-report.json` record browser evidence. Signed-package reports additionally include XPI hashes and installation identity. Packaging preserves all these reports.
 
-These are not needed for local use and are not claimed complete:
+## Outstanding production evidence
 
-- a retained uninterrupted 24-hour soak;
-- private-beta evidence across representative sites, browsers, players, and operating systems;
-- independent security and privacy review;
-- public privacy-policy hosting;
-- clean tagged deterministic packaging and two-workspace reproducibility evidence;
-- signed-package installation and N-1 settings/upgrade testing;
-- current Chrome/Firefox store submission or approval evidence for this exact candidate;
-- full Firefox behavioral automation and Firefox for Android validation.
+- A retained uninterrupted 24-hour soak result (smoke is not a substitute).
+- Representative field/beta evidence and the acceptance thresholds in `VALIDATION_PLAN.md`.
+- Independent security/privacy review.
+- Signed 3.1.5 installation and N-1 upgrade evidence after Mozilla supplies the signed package.
+- Human permission-prompt checks and the declared stable/ESR browser/OS matrix.
+- Firefox for Android and Chrome Web Store publication are not claimed.
 
-See `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_PLAN.md`, and `docs/RELEASE_EVIDENCE_TEMPLATE.md` before making any production-readiness claim.
+See `RELEASE_CHECKLIST.md`, `VALIDATION_PLAN.md`, and `RELEASE_EVIDENCE_TEMPLATE.md`. Preserve failures as well as passes; never mark an external gate complete based only on local automation or store approval.

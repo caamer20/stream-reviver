@@ -6,6 +6,35 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 - External beta, long-duration soak, independent security review, and browser-store review remain release gates.
 
+## [3.1.5] - 2026-09-19
+
+### Fixed
+
+- Correct Firefox optional host permissions and dynamic registration for custom-port sites; keep monitoring scoped to explicitly enabled origins.
+- Retain a shared Firefox host grant while another enabled origin needs it, and revoke it after the last origin is disabled.
+- Initialize the optional player bridge only in an authorized frame, with an execution-time origin check; unenabled sibling ports do not create monitoring records.
+- Select permission syntax by the compiled browser target, including Chromium versions that expose the `browser` namespace.
+- Avoid native media-wrapper cleanup after Firefox begins discarding a document; preserve full cleanup for live-site disable and back/forward-cache behavior.
+- Preserve prior packages and validation reports during packaging; atomically replace only owned release outputs and validate the current manifest inventory during reproducibility checks.
+
+### Maintenance
+
+- Close development dependency vulnerabilities and enforce the full dependency audit in CI and release checks.
+- Add real Firefox behavioral tests, port-isolation coverage, signed-install/upgrade test support, and retained CI browser evidence.
+- Clarify browser host grants versus exact-origin monitoring in privacy disclosures and settings.
+
+## [3.1.4]
+
+### Fixed
+
+- Restore fullscreen after automatic refresh by default, with native-player, reversible CSS, and user-click fallbacks.
+- Bind fullscreen restoration to the recovery cycle and a bounded retry window; respect global and per-site opt-outs.
+
+### Maintenance
+
+- Publish the Firefox listing, icon, privacy policy, and matching source archive.
+- Stabilize sandboxed Chrome for Testing automation and popup-navigation tests in GitHub Actions.
+
 ## [3.1.3] - 2026-08-30
 
 ### Changed

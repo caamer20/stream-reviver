@@ -32,4 +32,4 @@ jobs:
       - run: npm install --global npm@11.4.2
       - run: npm ci
       - run: npm run check:toolchain
-      - run: npm run audit:runtime
+      - run: npm run audit:dependencies

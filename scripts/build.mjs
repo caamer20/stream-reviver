@@ -16,7 +16,6 @@ const buildIdentity = await createBuildIdentity({ root, packageJson, channel: re
 const entryPoints = {
   background: "src/background/background.ts",
   content: "src/content/content.ts",
-  "page-bridge": "src/page-bridge/bridge.ts",
   popup: "src/popup/popup.ts",
   options: "src/options/options.ts",
   dashboard: "src/dashboard/dashboard.ts",

@@ -6,7 +6,7 @@
 
 **A privacy-first recovery assistant for live video streams.**
 
-[![Version](https://img.shields.io/badge/version-3.1.4-6d5dfc)](package.json)
+[![Version](https://img.shields.io/badge/version-3.1.5-6d5dfc)](package.json)
 [![Manifest](https://img.shields.io/badge/Manifest-V3-00a67d)](https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/manifest.json/manifest_version)
 [![Chrome and Firefox](https://img.shields.io/badge/browsers-Chrome%20%7C%20Firefox-2563eb)](#install-for-local-development)
 [![Privacy](https://img.shields.io/badge/analytics-none-00a67d)](docs/PRIVACY.md)
@@ -25,7 +25,7 @@ Built for Chrome and Firefox, with no analytics, advertising, remote code, or ex
 
 ## Getting started
 
-**Firefox:** [Install Stream Reviver from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Version 3.1.4 is available for Firefox desktop 142 and later.
+**Firefox:** [Install Stream Reviver from Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Firefox desktop 142 and later is supported; the store page shows the currently approved version.
 
 For local installation in Chrome or Firefox, follow the [development setup](#install-for-local-development) below. Once installed:
 
@@ -42,7 +42,7 @@ For local installation in Chrome or Firefox, follow the [development setup](#ins
 | Conservative detection | Requires sustained, corroborated failure evidence and protects manual pauses, hidden tabs, access interruptions, ads, offline periods, and intentional DVR rewind. |
 | Safe recovery | Starts with low-risk actions, verifies the result, limits retries, and keeps full-page reload as the final automatic step. |
 | Fullscreen after refresh | Enabled by default, configurable globally or per site, and falls back gracefully when browsers require a user gesture. |
-| Exact-origin access | Requests only the site the user enables; no persistent broad host permission is shipped. |
+| Opt-in site access | Monitors explicitly enabled origins; Firefox browser grants cover the selected scheme/hostname across ports. No persistent broad host permission is shipped. |
 | Privacy | Per-site settings and diagnostics stay in your browser profile; compact global preferences may sync through your browser account. |
 | Cross-browser delivery | One TypeScript codebase produces Chrome MV3 and Firefox MV3 builds with channel-specific manifests. |
 
@@ -175,7 +175,9 @@ npm run verify:reproducible
 
 Development and beta provenance records the current tree as clean or dirty. Stable builds and all packaging reject tracked modifications, untracked files, symlinks, submodules, unsafe archive paths, source-allowlist violations, toolchain drift, stale build metadata, and inconsistent version tags. The release workflow additionally requires an existing `vX.Y.Z` tag matching `package.json` at `HEAD`.
 
-The E2E and soak tests temporarily add only their random localhost origin to a copied manifest because headless Chrome cannot accept an extension permission prompt. They still use production dynamic content-script registration. Release manifests remain optional-permission-only.
+The Chrome E2E and soak tests temporarily add only their random localhost origin to a copied manifest because headless Chrome cannot accept an extension permission prompt. Firefox behavioral tests use geckodriver and a disposable profile; they seed a localhost optional grant through Firefox's permission store, then exercise production messages and dynamic registration. This does not test human permission prompts. Release manifests remain optional-permission-only.
+
+Run `npm run test:firefox:e2e` with `geckodriver` on PATH (or `GECKODRIVER_BIN` set). To test store signing and upgrades, run `node scripts/firefox-e2e.mjs --package /absolute/path/new-signed.xpi --previous /absolute/path/previous-signed.xpi --report artifacts/firefox-upgrade-report.json`. The previous version's settings, site configuration, and browser grant must survive the upgrade before behavioral checks run.
 
 The Browser E2E workflow installs Chrome for Testing and uses its explicit binary path for both behavioral and soak tests. Regular Google Chrome 137+ does not support the `--load-extension` flag used by these harnesses. For local runs, set `CHROME_BIN` to a Chrome for Testing or Chromium executable if automatic discovery cannot find one.
 
@@ -227,7 +229,7 @@ Open **Mission Control** from the popup or settings to see all configured sites,
 - `scripting`: register/inject scripts after an exact origin is enabled.
 - `alarms`: watches one-shot recovery/countdown deadlines across service-worker suspension. It never performs a delayed reload; if the visible top-frame countdown stops painting or misses its deadline, the alarm fails closed and cancels the stale action. It is not used for browsing, tracking, or periodic site access.
 - Optional `notifications`: requested only if notifications are enabled.
-- Optional `<all_urls>` capability: allows the extension to request one exact origin chosen by the user. It is not a standing all-sites grant. Enabling `https://example.com` requests `https://example.com/*`; disabling it unregisters scripts and revokes that origin.
+- Optional `<all_urls>` capability: allows requesting access for sites chosen by the user, not a standing all-sites grant. Firefox does not support ports in match patterns, so its browser grant covers the selected scheme/hostname across ports. Monitoring remains authorized per exact origin. Disabling an origin unregisters its scripts and removes the browser grant unless another enabled origin shares it.
 
 There is no `tabs` permission, no broad `host_permissions`, no remote code, and no network service. Some browser methods expose non-sensitive tab fields once an origin or `activeTab` is granted; the extension uses only what is needed for the enabled tab.
 
@@ -272,9 +274,9 @@ Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bo
 
 ## Production status
 
-The 3.1.4 release passed 562 automated tests, 21 Chrome end-to-end scenarios, Firefox lint and temporary-install checks, and local release integrity checks. Mozilla's package validation reported zero errors and warnings. The public Firefox submission includes the matching source archive, build instructions, privacy policy, and product icon.
+The 3.1.5 candidate adds custom-port permission fixes, exact-origin bridge isolation, a clean full dependency audit, preserved release evidence, and a real Firefox behavioral lane. See the [release checkpoint](docs/CHECKPOINT.md) for verification commands and outstanding gates. Each GitHub browser run retains its machine-readable Firefox and soak reports.
 
-Version 3.1.4 is published on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests do not establish universal recovery success across websites.
+Published builds are available on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests and store approval do not establish universal recovery success across websites.
 
 The current resumable development checkpoint, including its exact green local gates and intentionally unfinished external release work, is recorded in [Checkpoint](docs/CHECKPOINT.md).
 

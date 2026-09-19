@@ -28,7 +28,7 @@
   "popupProtectionHelp": { "message": "Choose where Stream Reviver can monitor and how this site differs from your defaults." },
   "popupExtensionEnabled": { "message": "Extension enabled" },
   "popupMonitorSite": { "message": "Monitor this site" },
-  "popupMonitorSiteHelp": { "message": "Requests access only to this origin" },
+  "popupMonitorSiteHelp": { "message": "Monitors this origin; browser access can cover other ports on this host" },
   "popupAutoRecover": { "message": "Automatic recovery" },
   "popupAutoRefresh": { "message": "Automatic page reload" },
   "popupAutoMaximize": { "message": "Fullscreen after refresh" },

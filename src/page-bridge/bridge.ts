@@ -1,6 +1,9 @@
 // This script intentionally runs in the page's MAIN world. Everything it emits
 // is treated as untrusted supplemental evidence by the isolated content script.
-(() => {
+// Self-contained: serialized by scripting.executeScript into one authorized
+// frame. Re-check the origin in that frame to fail closed across navigation.
+export function installProtocolBridge(expectedOrigin: string): void {
+  if (location.origin !== expectedOrigin) return;
   const marker = "__streamReviverProtocolBridgeV3";
   const scope = window as any;
   if (scope[marker]) return;
@@ -109,4 +112,4 @@
 
   function cleanError(value: unknown): string { return String(value).replace(/[\r\n]+/g, " ").slice(0, 160); }
   function finite(value: unknown): number { const number = Number(value); return Number.isFinite(number) ? number : 0; }
-})();
+}

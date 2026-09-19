@@ -1,5 +1,6 @@
-import { addAsyncMessageListener, apiCall, ext, getOrigin, originPattern, queryActiveTab, sendTabMessage } from "../shared/api";
+import { addAsyncMessageListener, apiCall, ext, getOrigin, originPattern, queryActiveTab, sendTabMessage, sharesEnabledOriginPermission } from "../shared/api";
 import { authorizeRuntimeMessage } from "../shared/authorization";
+import { installProtocolBridge } from "../page-bridge/bridge";
 import { effectiveSettings, getDisclaimerAcknowledged, getSettings, getVisualPrivacyAcknowledged, isUrlEnabled, restrictLocalStorageAccess, SETTINGS_STORAGE_KEYS, setDisclaimerAcknowledged, setSettings, setVisualPrivacyAcknowledged } from "../shared/settings";
 import { addActionOutcome, addHealthSample, addSession, addUserFeedback, emptySiteModel } from "../shared/outcomes";
 import { normalizeProfile } from "../shared/profiles";
@@ -210,13 +211,27 @@ async function loadSettings(force = false): Promise<Settings> {
 }
 
 async function getContentContext(origin: string, pageUrl: string, navigationId: string, tabId?: number, frameId = 0) {
+  const [settings, acknowledged] = await Promise.all([loadSettings(), getDisclaimerAcknowledged()]);
+  const effective = effectiveSettings(settings, origin);
+  // Browser host grants can cover sibling ports. Do not create session/model
+  // records for those origins unless the user explicitly enabled them.
+  if (!effective.siteEnabled) return {
+    acknowledged, settings: effective, pendingAutoMaximize: false,
+    pendingAutoMaximizeUntil: null, siteModel: null, recoveryResume: null
+  };
+  if (acknowledged && effective.enabled && effective.enableAdvancedPlayerBridge &&
+      isUrlEnabled(pageUrl, effective) && tabId !== undefined) {
+    await apiCall(ext.scripting.executeScript, ext.scripting, {
+      target: { tabId, frameIds: [frameId] }, world: "MAIN",
+      func: installProtocolBridge, args: [origin]
+    }).catch(() => undefined); // Unsupported/restricted MAIN worlds fail closed.
+  }
   const pageUrlBindingKey = await navigationBindingKey(pageUrl) ?? "";
-  const [settings, acknowledged, loops, preferences, snapshots, recoveryResume] = await Promise.all([
-    loadSettings(), getDisclaimerAcknowledged(), getLoopStore(), getPreferencesStore(), getSessionSnapshots()
+  const [loops, preferences, snapshots, recoveryResume] = await Promise.all([
+    getLoopStore(), getPreferencesStore(), getSessionSnapshots()
     , tabId === undefined ? Promise.resolve(null) : recoveryCoordinator.resume(tabId, frameId, origin, pageUrlBindingKey, navigationId)
   ]);
   const siteModel = tabId === undefined ? await getSiteModel(origin) : await recordSessionVisit(origin, tabId);
-  const effective = effectiveSettings(settings, origin);
   const entry = tabId === undefined ? undefined : loops[String(tabId)];
   const pendingMaximizeAt = effective.enabled && effective.siteEnabled && effective.autoMaximize &&
     recoveryResume && entry?.pendingMaximizeAt && Date.now() - entry.pendingMaximizeAt < MAX_PENDING_AGE
@@ -382,7 +397,9 @@ async function setSiteEnabled(origin: string, enabled: boolean, tabId?: number) 
   } else {
     for (const id of matchingTabIds) await removeOriginMonitorsFromTab(id, origin, "Site monitoring was disabled");
     await unregisterOrigin(origin);
-    try { await apiCall<boolean>(ext.permissions.remove, ext.permissions, { origins: [pattern] }); } catch { /* browser UI can revoke */ }
+    if (!sharesEnabledOriginPermission(settingsCache.perSite, origin)) {
+      try { await apiCall<boolean>(ext.permissions.remove, ext.permissions, { origins: [pattern] }); } catch { /* browser UI can revoke */ }
+    }
     await appendHistory({ event: "site-disabled", detail: `Monitoring disabled for ${origin}`, level: "info", url: origin, tabId });
   }
   return { ok: true, settings: settingsCache };
@@ -415,17 +432,15 @@ async function syncRegistrationsUnlocked(settings: Settings): Promise<void> {
   const expected = new Set<string>();
   for (const [origin, site] of Object.entries(settings.perSite)) if (site.enabled) {
     expected.add(registrationId(origin));
-    if (effectiveSettings(settings, origin).enableAdvancedPlayerBridge) expected.add(bridgeRegistrationId(origin));
   }
   const obsolete = registered.map((script) => script.id).filter((id) => id.startsWith(REGISTRATION_PREFIX) && !expected.has(id));
   if (obsolete.length) try { await apiCall<void>(ext.scripting.unregisterContentScripts, ext.scripting, { ids: obsolete }); } catch { /* best effort */ }
   for (const [origin, site] of Object.entries(settings.perSite)) {
     const pattern = originPattern(origin);
     if (site.enabled && pattern && await hasOriginPermission(pattern)) {
-      const hasContent = registered.some((script) => script.id === registrationId(origin));
-      const wantsBridge = effectiveSettings(settings, origin).enableAdvancedPlayerBridge;
-      const hasBridge = registered.some((script) => script.id === bridgeRegistrationId(origin));
-      if (!hasContent || wantsBridge !== hasBridge) await registerOriginUnlocked(origin);
+      const hasContent = registered.some((script) => script.id === registrationId(origin) &&
+        script.matches?.length === 1 && script.matches[0] === pattern);
+      if (!hasContent) await registerOriginUnlocked(origin);
     }
   }
 }
@@ -443,18 +458,6 @@ async function registerOriginUnlocked(origin: string): Promise<void> {
   try {
     await apiCall<void>(ext.scripting.registerContentScripts, ext.scripting, [{ ...base, persistAcrossSessions: true, matchOriginAsFallback: true } as any]);
   } catch { await apiCall<void>(ext.scripting.registerContentScripts, ext.scripting, [base]); }
-  const settings = effectiveSettings(await loadSettings(), origin);
-  if (settings.enableAdvancedPlayerBridge) {
-    const bridge = { id: bridgeRegistrationId(origin), matches: [pattern], js: ["page-bridge.js"], allFrames: true, runAt: "document_start" as const, world: "MAIN" as const };
-    try { await apiCall<void>(ext.scripting.registerContentScripts, ext.scripting, [{ ...bridge, persistAcrossSessions: true, matchOriginAsFallback: true } as any]); }
-    catch { try { await apiCall<void>(ext.scripting.registerContentScripts, ext.scripting, [bridge as any]); } catch { /* browser lacks MAIN-world registration */ } }
-    try {
-      const tabs = await apiCall<chrome.tabs.Tab[]>(ext.tabs.query, ext.tabs, {});
-      await Promise.all(tabs.filter((tab) => tab.id !== undefined && getOrigin(tab.url) === origin).map((tab) =>
-        apiCall(ext.scripting.executeScript, ext.scripting, { target: { tabId: tab.id!, allFrames: true }, files: ["page-bridge.js"], world: "MAIN" }).catch(() => undefined)
-      ));
-    } catch { /* applies on next navigation */ }
-  }
 }
 async function unregisterOrigin(origin: string): Promise<void> {
   return withRegistrationLock(() => unregisterOriginUnlocked(origin));

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assertReleaseRepository, createBuildIdentity, expectedReleaseTag, hasArgument, sha256 } from "./release-integrity.mjs";
+import { assertReleaseRepository, createBuildIdentity, expectedReleaseTag, hasArgument } from "./release-integrity.mjs";
+import { artifactInventory } from "./release-artifacts.mjs";
 
 const root = process.cwd();
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -11,7 +12,7 @@ const requireTag = hasArgument("--require-tag");
 const expectedTag = expectedReleaseTag();
 const repository = await assertReleaseRepository({ root, version: packageJson.version, requireTag, expectedTag });
 const identity = await createBuildIdentity({ root, packageJson, channel: "stable", enforceRelease: true });
-const baseline = await artifactInventory(path.join(root, "artifacts"));
+const baseline = await artifactInventory(path.join(root, "artifacts"), { version: packageJson.version, commit: repository.commit });
 assert.ok(baseline["release-manifest.json"], "Run the normal packaging command before the reproducibility check");
 
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "stream-reviver-reproducibility-"));
@@ -31,7 +32,7 @@ try {
     runs.push(await artifactInventory(path.join(workspace, "artifacts")));
   }
   assert.deepEqual(runs[0], runs[1], "Independent clean builds produced different release artifact hashes");
-  assert.deepEqual(withoutReproducibilityReport(baseline), runs[0], "Current release artifacts differ from independent clean builds");
+  assert.deepEqual(baseline, runs[0], "Current release artifacts differ from independent clean builds");
   const report = {
     schemaVersion: 1,
     version: packageJson.version,
@@ -46,23 +47,6 @@ try {
   console.log(`Reproducibility verified: two independent clean workspaces match ${Object.keys(runs[0]).length} packaged artifacts.`);
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
-}
-
-async function artifactInventory(directory) {
-  assert.ok((await stat(directory)).isDirectory(), `Artifact directory does not exist: ${directory}`);
-  const result = {};
-  for (const name of (await readdir(directory)).sort()) {
-    const file = path.join(directory, name);
-    const info = await stat(file);
-    assert.ok(info.isFile(), `Artifact inventory only supports regular files: ${file}`);
-    const bytes = await readFile(file);
-    result[name] = { bytes: bytes.length, sha256: sha256(bytes) };
-  }
-  return result;
-}
-
-function withoutReproducibilityReport(inventory) {
-  return Object.fromEntries(Object.entries(inventory).filter(([name]) => name !== "reproducibility.json"));
 }
 
 function runCommand(command, args, cwd) {
