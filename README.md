@@ -276,7 +276,7 @@ Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bo
 
 ## Production status
 
-The 3.1.6 candidate adds support-export privacy regression checks and platform-independent icon encoding to the 3.1.5 Firefox and release-hardening work. See the [release checkpoint](docs/CHECKPOINT.md) for verification commands and outstanding gates. Each GitHub browser run retains its Firefox/soak reports and diagnostic/dashboard UI evidence. Browser automation does not replace independent review or consented field testing.
+The approved 3.1.6 Firefox release fixes legacy diagnostic-export privacy and makes release archives byte-identical across macOS/Linux. Signed fresh installation and upgrade from 3.1.5 passed. See the [release checkpoint](docs/CHECKPOINT.md) and [release evidence](https://github.com/caamer20/stream-reviver/releases/tag/v3.1.6) for verification and outstanding gates. Each GitHub browser run retains its Firefox/soak reports and diagnostic/dashboard UI evidence. Browser automation does not replace independent review or consented field testing.
 
 Published builds are available on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests and store approval do not establish universal recovery success across websites.
 
