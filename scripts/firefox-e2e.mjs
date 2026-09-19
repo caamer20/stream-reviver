@@ -104,6 +104,9 @@ try {
   const before = await state();
   if (previousPath) {
     await check("signed-upgrade-preserves-settings-and-permission", async () => {
+      // Firefox closes extension-owned documents during an upgrade. Keep the
+      // driver control tab on a neutral document so its window handle survives.
+      await command("POST", "/url", { url: "about:blank" });
       const upgradedId = await command("POST", "/moz/addon/install", { path: addonPath, temporary: false });
       assert.equal(upgradedId, addonId, "upgrade must preserve the add-on ID");
       const info = await addonInfo();

@@ -33,7 +33,12 @@ jobs:
       - run: npm ci
       - run: npm run check:toolchain
       - name: Build and package the tagged clean source
-        run: npm run package:tagged
+        run: |
+          # Older immutable tags have policy fixtures that inherit CI tag
+          # variables. Isolate those fixtures, then explicitly bind the final
+          # package to the requested tag before retaining or publishing it.
+          env -u STREAM_REVIVER_EXPECTED_TAG -u GITHUB_REF npm run package:tagged
+          node scripts/package.mjs --require-tag --expected-tag "$STREAM_REVIVER_EXPECTED_TAG"
       - name: Rebuild twice in independent clean workspaces
         run: npm run verify:reproducible -- --require-tag
       - name: Rebuild the reviewer source archive without Git metadata

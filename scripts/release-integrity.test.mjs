@@ -11,6 +11,12 @@ import {
   validateExtensionVersion
 } from "./release-integrity.mjs";
 
+// These tests create their own 1.2.3 repository. A CI tag for the real project
+// must not become the expected tag of that independent fixture. This changes
+// only this test process; production release commands keep their environment.
+delete process.env.STREAM_REVIVER_EXPECTED_TAG;
+delete process.env.GITHUB_REF;
+
 const root = await mkdtemp(path.join(os.tmpdir(), "stream-reviver-release-policy-test-"));
 try {
   git(["init", "--quiet", "--initial-branch=main"]);
