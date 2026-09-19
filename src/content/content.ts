@@ -25,7 +25,7 @@ import type {
   RuntimeMessage,
   SelectorField
 } from "../shared/types";
-import { VideoCandidateManager, describeVideo } from "./candidates";
+import { VideoCandidateManager } from "./candidates";
 import { inspectEmbeddedVisibility } from "./embedded-visibility";
 import { FrameCoordinator } from "./frame-coordinator";
 import { discoverGenericFullscreenControl, type FullscreenControlDiscovery } from "./fullscreen-controls";
@@ -908,7 +908,7 @@ class StreamMonitor {
     this.startFrameCallbacks(video);
     if (this.settings.restorePlayerPreferences && this.savedPreferences) this.applyPreferences(video, this.savedPreferences);
     if (this.sessionSnapshot && this.sessionSnapshot.expiresAt > Date.now()) void this.restoreSessionSnapshot(video, this.sessionSnapshot);
-    void this.log("player-selected", `${describeVideo(video, !!this.settings.selectedVideoSelector)} selected`, "info", { score });
+    void this.log("player-selected", "Primary video selected", "info", { score });
   }
 
   private setPlaybackIntent(intent: PlaybackIntent, now = Date.now()): void {

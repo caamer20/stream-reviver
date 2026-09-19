@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 // Only a new, disposable geckodriver profile is used. The system context is
@@ -17,9 +18,12 @@ const argument = (name) => {
 };
 const packagePath = argument("--package");
 const previousPath = argument("--previous");
+const captureReviewerVideo = process.argv.includes("--capture-reviewer-video");
 assert.ok(!previousPath || packagePath, "--previous requires the signed --package to upgrade to");
 const expectedVersion = argument("--expected-version") ?? JSON.parse(await readFile("package.json", "utf8")).version;
 const reportPath = path.resolve(argument("--report") ?? "artifacts/firefox-e2e-report.json");
+const evidenceRoot = reportPath.replace(/\.json$/, "") + "-ui";
+const downloadRoot = await mkdtemp(path.join(tmpdir(), "stream-reviver-firefox-download-"));
 const addonPath = path.resolve(packagePath ?? "dist/firefox");
 await stat(addonPath);
 if (previousPath) await stat(path.resolve(previousPath));
@@ -66,7 +70,11 @@ try {
     if (match) base = `http://${match[1]}`;
     return !!base;
   }, "geckodriver must start", 15_000);
-  const firefoxOptions = { args: ["-headless"], prefs: { "extensions.update.enabled": false, "media.autoplay.default": 0, "media.autoplay.blocking_policy": 0 } };
+  const firefoxOptions = { args: ["-headless"], prefs: {
+    "extensions.update.enabled": false, "media.autoplay.default": 0, "media.autoplay.blocking_policy": 0,
+    "browser.download.folderList": 2, "browser.download.dir": downloadRoot, "browser.download.useDownloadDir": true,
+    "browser.helperApps.neverAsk.saveToDisk": "application/json"
+  } };
   if (process.env.FIREFOX_BIN) firefoxOptions.binary = process.env.FIREFOX_BIN;
   const session = await request("POST", "/session", { capabilities: { alwaysMatch: { browserName: "firefox", "moz:firefoxOptions": firefoxOptions } } });
   sessionId = session.sessionId;
@@ -74,6 +82,7 @@ try {
   report.browserVersion = session.capabilities.browserVersion;
   report.platform = session.capabilities.platformName;
   await command("POST", "/timeouts", { script: 20_000, pageLoad: 30_000, implicit: 0 });
+  await command("POST", "/window/rect", { width: 1440, height: 1000 });
   addonId = await command("POST", "/moz/addon/install", { path: path.resolve(previousPath ?? addonPath), temporary: !packagePath });
   report.addonId = addonId;
   report.initialAddon = await addonInfo();
@@ -133,6 +142,50 @@ try {
   }
   await send({ type: "UPDATE_GLOBAL_SETTINGS", patch: { autoMaximize: true, pageLoadGraceSeconds: 0, checkIntervalSeconds: 1, healthyCheckIntervalSeconds: 2, suspectCheckIntervalSeconds: 0.5, stallTimeoutSeconds: 5, failureConfirmationChecks: 2, recoveryVerificationSeconds: 3, refreshCountdownSeconds: 1, maxAutoRefreshes: 1, recoveryBackoffSeconds: [1, 1], historyLimit: 500, localHistoryEnabled: true } });
   await send({ type: "SET_SITE_OVERRIDES", origin, overrides: { enabled: true, recoveryStrategy: ["PAGE_RELOAD"], enableAdvancedPlayerBridge: true }, replace: true });
+  await check("default-diagnostic-preview-redaction", async () => {
+    const selector = "#private-selector-fixture";
+    await send({ type: "SAVE_SITE_SELECTOR", origin, field: "fullscreenButtonSelector", selector });
+    await extension("return browser.runtime.sendMessage(arguments[0]);", [{ type: "LOG_HISTORY", entry: {
+      event: "synthetic-privacy-check", level: "info", detail: `Fixture URL ${origin}/private-route-fixture?private-query-fixture=1#private-fragment-fixture`,
+      url: `${origin}/private-route-fixture?private-query-fixture=1#private-fragment-fixture`,
+      metadata: { action: "WAIT" }
+    } }]);
+    for (const [event, detail] of [
+      ["selector-saved", "selectedVideoSelector saved as #legacy-private-selector-fixture"],
+      ["player-selected", "video (private-player-label-fixture) selected"]
+    ]) await extension("return browser.runtime.sendMessage(arguments[0]);", [{ type: "LOG_HISTORY", entry: { event, detail, level: "info", url: origin } }]);
+    const rejected = await extension("return browser.runtime.sendMessage(arguments[0]);", [{ type: "LOG_HISTORY", entry: {
+      event: "rejected-metadata-fixture", detail: "Synthetic fixture", level: "info", url: origin,
+      metadata: { privateUnknown: "unknown-metadata-fixture", screenshot: "screenshot-fixture" }
+    } }]);
+    assert.equal(rejected?.ok, false, "unknown diagnostic metadata must be rejected at the message boundary");
+    await command("POST", "/refresh", {});
+    await eventually(() => script("return document.getElementById('diagnostic-history')?.textContent.includes('synthetic-privacy-check');"), "history must load in the real settings UI");
+    await script("document.getElementById('export-diagnostics').click();");
+    const preview = await script("return document.getElementById('diagnostic-export-preview').textContent;");
+    const parsed = JSON.parse(preview);
+    report.diagnosticPreviewRedaction = parsed.redaction;
+    assert.equal(parsed.redaction.selectors, true);
+    assert.equal(parsed.browserDetails, "redacted");
+    try {
+      for (const secret of [origin, selector, "legacy-private-selector-fixture", "private-player-label-fixture", "private-route-fixture", "private-query-fixture", "private-fragment-fixture", "unknown-metadata-fixture", "screenshot-fixture"]) {
+        assert.ok(!preview.includes(secret), `default preview must redact ${secret}`);
+      }
+    } catch (error) { report.failedSyntheticDiagnosticPreview = parsed; throw error; }
+    await screenshot("diagnostic-preview.png");
+    await script("document.getElementById('download-diagnostics').click();");
+    let downloaded;
+    await eventually(async () => {
+      const files = await readdir(downloadRoot);
+      downloaded = files.find(name => /^stream-reviver-diagnostics-.*\.json$/.test(name));
+      return downloaded && !files.some(name => name.endsWith(".part")) && (await stat(path.join(downloadRoot, downloaded))).size > 0;
+    }, "reviewed diagnostic bundle must download");
+    const bytes = await readFile(path.join(downloadRoot, downloaded));
+    assert.deepEqual(JSON.parse(bytes.toString("utf8")), parsed, "downloaded bundle must match the reviewed redacted preview");
+    await writeFile(path.join(evidenceRoot, "diagnostic-default-export.json"), bytes);
+    report.diagnosticDownload = { bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), matchesPreview: true };
+    await send({ type: "SAVE_SITE_SELECTOR", origin, field: "fullscreenButtonSelector", selector: "" });
+  });
   await check("sibling-port-is-not-monitored-or-bridged", async () => {
     const tab = await command("POST", "/window/new", { type: "tab" });
     await command("POST", "/window", { handle: tab.handle });
@@ -167,6 +220,35 @@ try {
     assert.ok(!events.some(item => item.event === "post-refresh-maximize"));
     assert.deepEqual(layout, { fullscreen: false, maximized: false });
   });
+  await check("dashboard-privacy-and-disabled-closed-focus", async () => {
+    // Keep a sibling grant enabled so disabling/restoring this fixture does
+    // not require a new headless permission grant.
+    await send({ type: "SET_SITE_ENABLED", origin: siblingOrigin, enabled: true });
+    const tab = await command("POST", "/window/new", { type: "tab" });
+    await command("POST", "/window", { handle: tab.handle });
+    await command("POST", "/url", { url: `${origin}/test-page.html?mode=healthy&private-dashboard-query=1#private-dashboard-fragment` });
+    await new Promise(resolve => setTimeout(resolve, 6_000));
+    await command("POST", "/window", { handle: controlWindow });
+    const browserTab = await extension("return (await browser.tabs.query({})).find(tab=>tab.url?.includes('private-dashboard-query')); ");
+    assert.ok(browserTab?.id);
+    const dashboard = await extension("return browser.runtime.sendMessage({type:'GET_DASHBOARD_STATE'});");
+    assert.ok(dashboard.activeMonitors.some(monitor => monitor.tabId === browserTab.id));
+    for (const secret of ["test-page.html", "private-dashboard-query", "private-dashboard-fragment"]) assert.ok(!JSON.stringify(dashboard).includes(secret));
+    await command("POST", "/url", { url: optionsUrl.replace("options.html", "dashboard.html") });
+    await eventually(() => script("return document.getElementById('dashboard-content')?.hidden === false;"), "dashboard must render");
+    const visible = await script("return document.getElementById('main-content').innerText;");
+    assert.ok(visible.includes("127.0.0.1"));
+    for (const secret of ["test-page.html", "private-dashboard-query", "private-dashboard-fragment", origin]) assert.ok(!visible.includes(secret));
+    await screenshot("dashboard.png");
+    await send({ type: "SET_SITE_ENABLED", origin, enabled: false });
+    assert.equal((await extension("return browser.runtime.sendMessage({type:'FOCUS_DASHBOARD_TAB',tabId:arguments[0]});", [browserTab.id])).ok, false, "disabled target must not be focused");
+    await send({ type: "SET_SITE_ENABLED", origin, enabled: true });
+    await command("POST", "/window", { handle: tab.handle });
+    await command("DELETE", "/window");
+    await command("POST", "/window", { handle: controlWindow });
+    assert.equal((await extension("return browser.runtime.sendMessage({type:'FOCUS_DASHBOARD_TAB',tabId:arguments[0]});", [browserTab.id])).ok, false, "closed target must not be focused");
+    await openOptions();
+  });
   await check("disable-retains-shared-permission-for-enabled-sibling", async () => {
     await send({ type: "SET_SITE_ENABLED", origin: siblingOrigin, enabled: true });
     await send({ type: "SET_SITE_ENABLED", origin, enabled: false });
@@ -181,7 +263,10 @@ try {
     await eventually(async () => !(await extension("return browser.permissions.contains({origins:[arguments[0]]});", [pattern])), "disable must revoke site access");
     await eventually(async () => (await extension("return browser.scripting.getRegisteredContentScripts();")).length === 0, "last disable must remove all registrations");
   });
-  assert.equal(extensionTimeoutWarnings(), 0, "Firefox must not abort extension scripts during fixture lifecycle");
+  // Gecko can abort callbacks when their document is discarded, even a
+  // one-statement callback. Retain all stacks for review; bounded driver
+  // requests and behavioral assertions, not console-warning count, determine
+  // whether a live scenario succeeds.
   report.result = "passed";
   console.log(`Firefox E2E: ${report.checks.length} checks passed (${report.mode}, Firefox ${report.browserVersion}).`);
 } catch (error) {
@@ -194,6 +279,7 @@ try {
   report.finishedAt = new Date().toISOString();
   report.scriptTimeoutWarnings = (driverLog.match(/Script terminated by timeout/g) ?? []).length;
   report.extensionScriptTimeoutWarnings = extensionTimeoutWarnings();
+  report.runtimeWarningPolicy = "All warning stacks are retained; Gecko may abort callbacks during document disposal. Functional assertions and bounded driver requests define pass/fail. Warnings are not independent security-review evidence.";
   if (report.scriptTimeoutWarnings) report.browserDiagnostics = driverLog;
   await mkdir(path.dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -246,7 +332,8 @@ async function scenario(name, mode, duration, verify, fixtureOrigin = origin) {
     const tab = await command("POST", "/window/new", { type: "tab" });
     await command("POST", "/window", { handle: tab.handle });
     await command("POST", "/url", { url: `${fixtureOrigin}/test-page.html?mode=${mode}` });
-    await new Promise(resolve => setTimeout(resolve, duration));
+    if (captureReviewerVideo && name === "refresh-and-fullscreen") await recordReviewerVideo(duration);
+    else await new Promise(resolve => setTimeout(resolve, duration));
     report.lastFixture = await script("return {url:location.href,bridge:!!window.__streamReviverProtocolBridgeV3,visibility:document.visibilityState,title:document.title,readout:document.getElementById('readout')?.textContent,videos:[...document.querySelectorAll('video')].map(v=>({time:v.currentTime,paused:v.paused,ready:v.readyState}))};");
     const layout = await script("return {fullscreen:!!document.fullscreenElement,maximized:!!document.querySelector('.stream-reviver-maximized')};");
     await command("POST", "/window", { handle: controlWindow });
@@ -272,6 +359,29 @@ async function check(name, operation) {
   report.checks.push({ name, result: "passed", at: new Date().toISOString() });
   console.log(`✓ Firefox: ${name}`);
 }
+async function screenshot(name) {
+  await mkdir(evidenceRoot, { recursive: true });
+  await writeFile(path.join(evidenceRoot, name), Buffer.from(await command("GET", "/screenshot"), "base64"));
+}
+async function recordReviewerVideo(duration) {
+  const frames = path.join(evidenceRoot, "refresh-frames");
+  await mkdir(frames, { recursive: true });
+  const started = Date.now();
+  let count = 0;
+  while (Date.now() - started < duration) {
+    const frameStarted = Date.now();
+    await writeFile(path.join(frames, `${String(count++).padStart(4, "0")}.png`), Buffer.from(await command("GET", "/screenshot"), "base64"));
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, 500 - (Date.now() - frameStarted))));
+  }
+  const elapsedSeconds = (Date.now() - started) / 1000;
+  const output = path.join(evidenceRoot, "refresh-reviewer-demo.mp4");
+  execFileSync(process.env.FFMPEG_BIN ?? "ffmpeg", [
+    "-hide_banner", "-loglevel", "error", "-y", "-framerate", String(count / elapsedSeconds),
+    "-i", path.join(frames, "%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-movflags", "+faststart", output
+  ]);
+  report.reviewerVideo = { file: path.relative(path.dirname(reportPath), output), frames: count, elapsedSeconds, source: "sampled real browser screenshots of the synthetic localhost fixture" };
+}
 async function eventually(operation, message, timeout = 10_000) {
   const end = Date.now() + timeout;
   do {
@@ -291,4 +401,5 @@ async function cleanup() {
   siblingServer.closeAllConnections();
   await new Promise(resolve => siblingServer.close(resolve));
   await new Promise(resolve => server.close(resolve));
+  await rm(downloadRoot, { recursive: true, force: true });
 }

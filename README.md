@@ -6,7 +6,7 @@
 
 **A privacy-first recovery assistant for live video streams.**
 
-[![Version](https://img.shields.io/badge/version-3.1.5-6d5dfc)](package.json)
+[![Version](https://img.shields.io/badge/version-3.1.6-6d5dfc)](package.json)
 [![Manifest](https://img.shields.io/badge/Manifest-V3-00a67d)](https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/manifest.json/manifest_version)
 [![Chrome and Firefox](https://img.shields.io/badge/browsers-Chrome%20%7C%20Firefox-2563eb)](#install-for-local-development)
 [![Privacy](https://img.shields.io/badge/analytics-none-00a67d)](docs/PRIVACY.md)
@@ -276,7 +276,7 @@ Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bo
 
 ## Production status
 
-The 3.1.5 candidate adds custom-port permission fixes, exact-origin bridge isolation, a clean full dependency audit, preserved release evidence, and a real Firefox behavioral lane. See the [release checkpoint](docs/CHECKPOINT.md) for verification commands and outstanding gates. Each GitHub browser run retains its machine-readable Firefox and soak reports.
+The 3.1.6 candidate adds support-export privacy regression checks and platform-independent icon encoding to the 3.1.5 Firefox and release-hardening work. See the [release checkpoint](docs/CHECKPOINT.md) for verification commands and outstanding gates. Each GitHub browser run retains its Firefox/soak reports and diagnostic/dashboard UI evidence. Browser automation does not replace independent review or consented field testing.
 
 Published builds are available on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests and store approval do not establish universal recovery success across websites.
 

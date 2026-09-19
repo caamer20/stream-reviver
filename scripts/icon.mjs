@@ -1,5 +1,3 @@
-import { deflateSync } from "node:zlib";
-
 const PNG_SIGNATURE = Buffer.from("89504e470d0a1a0a", "hex");
 
 /**
@@ -40,9 +38,27 @@ export function createIconPng(size) {
   return Buffer.concat([
     PNG_SIGNATURE,
     pngChunk("IHDR", Buffer.concat([uint32(size), uint32(size), Buffer.from([8, 6, 0, 0, 0])])),
-    pngChunk("IDAT", deflateSync(raw, { level: 9 })),
+    pngChunk("IDAT", storedZlib(raw)),
     pngChunk("IEND", Buffer.alloc(0))
   ]);
+}
+
+// RFC 1950/1951 stored blocks avoid platform-specific native zlib output.
+// Icon pixels stay unchanged; release ZIP/signing can compress these bytes.
+function storedZlib(raw) {
+  const blocks = [Buffer.from([0x78, 0x01])];
+  for (let offset = 0; offset < raw.length; offset += 65535) {
+    const length = Math.min(65535, raw.length - offset);
+    const header = Buffer.alloc(5);
+    header[0] = offset + length === raw.length ? 1 : 0;
+    header.writeUInt16LE(length, 1);
+    header.writeUInt16LE(length ^ 0xffff, 3);
+    blocks.push(header, raw.subarray(offset, offset + length));
+  }
+  let a = 1, b = 0;
+  for (const byte of raw) { a = (a + byte) % 65521; b = (b + a) % 65521; }
+  blocks.push(uint32((b << 16) | a));
+  return Buffer.concat(blocks);
 }
 
 function sampleMark(x, y) {

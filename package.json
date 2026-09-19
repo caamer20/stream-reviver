@@ -1,6 +1,6 @@
 {
   "name": "stream-reviver",
-  "version": "3.1.5",
+  "version": "3.1.6",
   "private": true,
   "description": "A conservative, opt-in live stream monitor for Chrome and Firefox.",
   "author": {
@@ -35,7 +35,7 @@
     "test:e2e": "node scripts/e2e.mjs",
     "test:performance": "node scripts/performance-check.mjs",
     "test:accessibility": "node scripts/accessibility-check.mjs",
-    "test:release-integrity": "node scripts/release-integrity.test.mjs && node scripts/deterministic-zip.test.mjs && node scripts/release-artifacts.test.mjs && node scripts/source-archive.test.mjs && node scripts/no-egress.test.mjs",
+    "test:release-integrity": "node scripts/release-integrity.test.mjs && node scripts/deterministic-zip.test.mjs && node scripts/release-artifacts.test.mjs && node scripts/source-archive.test.mjs && node scripts/icon.test.mjs && node scripts/no-egress.test.mjs",
     "test:soak:smoke": "npm run build && node scripts/soak.mjs --smoke",
     "test:soak": "npm run build && node scripts/soak.mjs --hours 24",
     "test:firefox": "npm run build && node scripts/firefox-smoke.mjs",

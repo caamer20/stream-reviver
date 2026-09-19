@@ -70,5 +70,6 @@ jobs:
           path: |
             artifacts/soak-report.json
             artifacts/firefox-e2e-report.json
+            artifacts/firefox-e2e-report-ui/
           if-no-files-found: warn
           retention-days: 90

@@ -104,7 +104,8 @@ try {
   });
 
   await scenario(debugPort, "multi", 10_000, async (events) => {
-    assert.ok(events.some((item) => item.event === "player-selected" && item.detail.includes("test-video")), "main player should beat the muted preview");
+    const status = await getScenarioStatus(debugPort, "multi");
+    assert.ok(status.selectedVideoLabel.includes("test-video"), "main player should beat the muted preview");
     assert.ok(events.some((item) => item.event === "status-healthy"), "multiple-video page should remain healthy");
   });
 
@@ -125,7 +126,8 @@ try {
   });
 
   await scenario(debugPort, "shadow", 10_000, async (events) => {
-    assert.ok(events.some((item) => item.event === "player-selected" && item.detail.includes("Open shadow root test video")), "open shadow-root video should be discovered and selected");
+    const status = await getScenarioStatus(debugPort, "shadow");
+    assert.ok(status.selectedVideoLabel.includes("Open shadow root test video"), "open shadow-root video should be discovered and selected");
     assert.ok(events.some((item) => item.event === "status-healthy"), "open shadow-root player should become healthy");
   });
 
@@ -360,6 +362,16 @@ async function clearRuntime(debugPort) {
 }
 async function getHistory(debugPort) {
   return await evaluateWorker(debugPort, `(async()=>{const x=await chrome.storage.local.get('streamReviverHistoryV2');return x.streamReviverHistoryV2||[]})()`);
+}
+
+// Assert player identity from live UI state, not identifying diagnostic history.
+async function getScenarioStatus(debugPort, mode) {
+  return await evaluateWorker(debugPort, `(async()=>{
+    const tabs=await chrome.tabs.query({});
+    const tab=tabs.find(t=>t.url===${JSON.stringify(`${origin}/test-page.html?mode=`)}+${JSON.stringify(mode)});
+    if(!tab) throw new Error('Scenario tab not found');
+    return (await chrome.runtime.sendMessage({type:'GET_POPUP_STATE',tabId:tab.id})).status;
+  })()`);
 }
 
 async function evaluateWorker(debugPort, expression, userGesture = false) {

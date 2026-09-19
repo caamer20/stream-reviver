@@ -416,7 +416,7 @@ async function saveSiteSelector(origin: string, field: SelectorField, selector: 
   settings.perSite[origin] = { ...(settings.perSite[origin] ?? {}), [field]: selector };
   settingsCache = await setSettings(settings);
   if (tabId !== undefined) await safeSendAll(tabId, { type: "STOP_ELEMENT_PICKER" });
-  await appendHistory({ event: "selector-saved", detail: `${field} saved as ${selector}`, level: "info", url: origin, tabId });
+  await appendHistory({ event: "selector-saved", detail: `${field} updated`, level: "info", url: origin, tabId });
   return { ok: true, selector };
 }
 

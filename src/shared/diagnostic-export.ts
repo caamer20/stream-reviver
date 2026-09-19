@@ -52,7 +52,9 @@ export function createDiagnosticExport(input: DiagnosticExportInput, options: Di
       timestamp: event.timestamp,
       level: event.level,
       event: event.event,
-      detail: redactFreeText(event.detail, options),
+      detail: event.event === "selector-saved" ? "Custom selector updated [redacted-selector]"
+        : event.event === "player-selected" ? "Primary video selected"
+          : redactFreeText(event.detail, options),
       page: redactUrl(event.url, options, aliases),
       frameId: event.frameId,
       metadata: redactMetadata(event.metadata)

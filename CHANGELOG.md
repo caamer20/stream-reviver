@@ -6,6 +6,20 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 - External beta, long-duration soak, independent security review, and browser-store review remain release gates.
 
+## [3.1.6] - 2026-09-19
+
+### Fixed
+
+- Redact legacy selector-save history and page-derived player labels from diagnostic support bundles, even when a selector was later changed or removed. The selector opt-in covers current configuration, not historical values.
+- Stop recording raw selector values and page-derived labels in new diagnostic history. Nothing is transmitted automatically; this fixes identifying data that could appear when a user deliberately exported/shared a support bundle.
+- Make icon PNG encoding byte-identical across supported build platforms without changing any pixels; add golden-byte checks for all shipped icon sizes.
+
+### Validation
+
+- Exercise the real diagnostic preview and downloaded JSON with synthetic private markers, including legacy history, and verify exact preview/download equality.
+- Exercise Mission Control's rendered privacy boundary and reject focus requests for disabled or closed targets; retain UI screenshots and optional sampled-browser reviewer video.
+- Retain Gecko runtime warnings for review instead of treating document-disposal warnings as evidence of a live-page hang; browser operations remain deadline-bounded and behavior assertions remain mandatory.
+
 ## [3.1.5] - 2026-09-19
 
 ### Fixed
