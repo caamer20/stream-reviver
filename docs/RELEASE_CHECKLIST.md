@@ -12,6 +12,7 @@
 - [ ] `npm run test:soak:smoke` passes its one-browser/profile resource and false-recovery guards before extended soak; retain `artifacts/soak-report.json`.
 - [ ] `npm run package:tagged` produces Chrome, Firefox, allowlisted tracked source, CycloneDX 1.6 SBOM, and SHA-256 release metadata.
 - [ ] `npm run verify:reproducible -- --require-tag` proves two independent clean-workspace builds match the normal package and writes `artifacts/reproducibility.json`.
+- [ ] `npm run verify:source` extracts the actual source ZIP without Git, runs the documented reviewer rebuild, and matches both browser file inventories; retain `artifacts/source-rebuild.json`.
 - [ ] Archive `release-manifest.json`, `reproducibility.json`, build provenance, SBOM, source package, browser packages, and SHA-256 hashes together.
 - [ ] Complete `docs/RELEASE_EVIDENCE_TEMPLATE.md`; every checked gate links to retained evidence rather than relying on memory or a local terminal window.
 - [ ] Preview a default diagnostic support bundle and verify origins, paths, selectors, browser details, queries/fragments, unknown metadata, screenshots, and visual hashes are absent or redacted as designed.

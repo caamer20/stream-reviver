@@ -27,6 +27,7 @@
     "build:development": "node scripts/build.mjs --channel development",
     "build:beta": "node scripts/build.mjs --channel beta",
     "build:stable": "node scripts/build.mjs --channel stable",
+    "build:source": "node scripts/build.mjs --channel stable --source-archive",
     "build:channels": "npm run build:development && npm run build:beta && npm run build:stable",
     "check": "tsc --noEmit",
     "test": "node scripts/test.mjs",
@@ -34,7 +35,7 @@
     "test:e2e": "node scripts/e2e.mjs",
     "test:performance": "node scripts/performance-check.mjs",
     "test:accessibility": "node scripts/accessibility-check.mjs",
-    "test:release-integrity": "node scripts/release-integrity.test.mjs && node scripts/deterministic-zip.test.mjs && node scripts/release-artifacts.test.mjs && node scripts/no-egress.test.mjs",
+    "test:release-integrity": "node scripts/release-integrity.test.mjs && node scripts/deterministic-zip.test.mjs && node scripts/release-artifacts.test.mjs && node scripts/source-archive.test.mjs && node scripts/no-egress.test.mjs",
     "test:soak:smoke": "npm run build && node scripts/soak.mjs --smoke",
     "test:soak": "npm run build && node scripts/soak.mjs --hours 24",
     "test:firefox": "npm run build && node scripts/firefox-smoke.mjs",
@@ -47,6 +48,7 @@
     "package": "npm run release:check && node scripts/package.mjs",
     "package:tagged": "npm run release:check && node scripts/package.mjs --require-tag",
     "verify:reproducible": "node scripts/reproducibility-check.mjs",
+    "verify:source": "node scripts/verify-source-archive.mjs",
     "verify": "npm run check && npm test && npm run build"
   },
   "overrides": {

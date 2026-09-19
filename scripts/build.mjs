@@ -3,16 +3,21 @@ import { cp, lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/prom
 import path from "node:path";
 import { createIconPng } from "./icon.mjs";
 import { canonicalDigest, createBuildIdentity, readArgument } from "./release-integrity.mjs";
+import { sourceArchiveIdentity } from "./source-archive.mjs";
 
 const root = process.cwd();
 const requestedChannel = readArgument("--channel") ?? "development";
 if (!["development", "beta", "stable"].includes(requestedChannel)) throw new Error(`Unknown build channel: ${requestedChannel}`);
 const legacyLayout = !process.argv.includes("--channel");
-const outRoot = legacyLayout ? path.join(root, "dist") : path.join(root, "dist", requestedChannel);
+const sourceArchive = process.argv.includes("--source-archive");
+if (sourceArchive && (requestedChannel !== "stable" || legacyLayout)) throw new Error("Source archive rebuilds require --channel stable");
+const outRoot = sourceArchive ? path.join(root, "dist", "source-archive")
+  : legacyLayout ? path.join(root, "dist") : path.join(root, "dist", requestedChannel);
 const browsers = ["chrome", "firefox"];
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const channelConfig = JSON.parse(await readFile(path.join(root, "config", `${requestedChannel}.json`), "utf8"));
-const buildIdentity = await createBuildIdentity({ root, packageJson, channel: requestedChannel });
+const buildIdentity = sourceArchive ? await sourceArchiveIdentity(root, packageJson)
+  : await createBuildIdentity({ root, packageJson, channel: requestedChannel });
 const entryPoints = {
   background: "src/background/background.ts",
   content: "src/content/content.ts",

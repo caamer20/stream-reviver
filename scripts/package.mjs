@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, readdir, rename, unlink, writeFile } from "node
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createDeterministicZip } from "./deterministic-zip.mjs";
+import { SOURCE_BUILD_METADATA, sourceArchiveMetadata } from "./source-archive.mjs";
 import {
   assertReleaseRepository,
   canonicalDigest,
@@ -34,6 +35,7 @@ const artifactDirectory = await lstat(artifacts);
 assert.ok(artifactDirectory.isDirectory() && !artifactDirectory.isSymbolicLink(), "Artifact output must be a real directory");
 
 const sourceFiles = await collectTrackedSource(root, repository.entries);
+sourceFiles.push({ name: SOURCE_BUILD_METADATA, mode: "100644", data: Buffer.from(`${JSON.stringify(sourceArchiveMetadata(expectedIdentity, repository.entries), null, 2)}\n`) });
 const archiveSpecs = [
   { name: `stream-reviver-${version}-chrome.zip`, entries: await collectOutput(path.join(stableRoot, "chrome")), prefix: "" },
   { name: `stream-reviver-${version}-firefox.zip`, entries: await collectOutput(path.join(stableRoot, "firefox")), prefix: "" },

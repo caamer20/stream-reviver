@@ -24,11 +24,14 @@ npm run test:firefox:e2e
 npm run test:soak:smoke
 npm run package:tagged
 npm run verify:reproducible -- --require-tag
+npm run verify:source
 ```
 
 The local candidate passed 569 unit/property tests; Firefox's 10 behavioral checks include settings persistence, healthy playback, pause protection, fullscreen restoration/opt-out, unenabled sibling-port isolation, and shared-grant revocation. The full clean-tree release gate must run again after the final commit.
 
 `artifacts/release-manifest.json` binds version, tag, commit, archives, source, SBOM, and hashes. `artifacts/reproducibility.json` records independent clean-build comparison. `artifacts/firefox-e2e-report.json` and `artifacts/soak-report.json` record browser evidence. Signed-package reports additionally include XPI hashes and installation identity. Packaging preserves all these reports.
+
+The source ZIP includes generated `SOURCE_BUILD.json`. Reviewers run `npm ci` and `npm run build:source` without Git; the metadata inventory and source hash must validate first. `artifacts/source-rebuild.json` records that the actual extracted source reconstructs both submitted browser file inventories exactly. This mode writes `dist/source-archive` and does not relax normal stable-release Git/tag enforcement.
 
 ## Outstanding production evidence
 

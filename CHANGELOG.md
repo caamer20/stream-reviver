@@ -12,6 +12,7 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 - Correct Firefox optional host permissions and dynamic registration for custom-port sites; keep monitoring scoped to explicitly enabled origins.
 - Retain a shared Firefox host grant while another enabled origin needs it, and revoke it after the last origin is disabled.
+- Remove only existing content-script IDs when disabling a Firefox site and reconcile queued registrations against current settings.
 - Initialize the optional player bridge only in an authorized frame, with an execution-time origin check; unenabled sibling ports do not create monitoring records.
 - Select permission syntax by the compiled browser target, including Chromium versions that expose the `browser` namespace.
 - Avoid native media-wrapper cleanup after Firefox begins discarding a document; preserve full cleanup for live-site disable and back/forward-cache behavior.
@@ -21,6 +22,7 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 - Close development dependency vulnerabilities and enforce the full dependency audit in CI and release checks.
 - Add real Firefox behavioral tests, port-isolation coverage, signed-install/upgrade test support, and retained CI browser evidence.
+- Include validated build metadata in source archives and verify exact browser reconstruction without Git, using the documented reviewer command.
 - Clarify browser host grants versus exact-origin monitoring in privacy disclosures and settings.
 
 ## [3.1.4]

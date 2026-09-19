@@ -115,7 +115,7 @@ ext.storage.onChanged.addListener((changes, areaName) => {
     settingsCache = null;
     if (clearingAllData) return;
     void loadSettings().then(async (settings) => {
-      await syncRegistrations(settings);
+      await syncRegistrations();
       await broadcastSettings(settings);
     }).catch(() => undefined);
   }
@@ -194,8 +194,7 @@ void initialize(false);
 
 async function initialize(firstInstall: boolean): Promise<void> {
   await restrictLocalStorageAccess();
-  const settings = await loadSettings(true);
-  await syncRegistrations(settings);
+  await syncRegistrations();
   await reconcileExpiredRecoveries();
   await restoreRecoveryAlarms();
   if (firstInstall) {
@@ -421,8 +420,10 @@ async function saveSiteSelector(origin: string, field: SelectorField, selector: 
   return { ok: true, selector };
 }
 
-async function syncRegistrations(settings: Settings): Promise<void> {
-  return withRegistrationLock(() => syncRegistrationsUnlocked(settings));
+async function syncRegistrations(): Promise<void> {
+  // A queued storage event may describe a site that was disabled while it
+  // waited. Re-read inside the lock so it cannot resurrect stale registrations.
+  return withRegistrationLock(async () => syncRegistrationsUnlocked(await loadSettings(true)));
 }
 
 async function syncRegistrationsUnlocked(settings: Settings): Promise<void> {
@@ -464,7 +465,13 @@ async function unregisterOrigin(origin: string): Promise<void> {
 }
 async function unregisterOriginUnlocked(origin: string): Promise<void> {
   if (!ext.scripting?.unregisterContentScripts) return;
-  try { await apiCall<void>(ext.scripting.unregisterContentScripts, ext.scripting, { ids: [registrationId(origin), bridgeRegistrationId(origin)] }); } catch { /* absent */ }
+  try {
+    const registered = await apiCall<chrome.scripting.RegisteredContentScript[]>(ext.scripting.getRegisteredContentScripts, ext.scripting);
+    const owned = new Set([registrationId(origin), bridgeRegistrationId(origin)]);
+    const ids = registered.filter(script => owned.has(script.id)).map(script => script.id);
+    // Firefox rejects the whole batch if even one requested ID is absent.
+    if (ids.length) await apiCall<void>(ext.scripting.unregisterContentScripts, ext.scripting, { ids });
+  } catch { /* permission revocation can concurrently remove registrations */ }
 }
 async function withRegistrationLock<T>(operation: () => Promise<T>): Promise<T> {
   const task = registrationQueue.then(operation, operation);

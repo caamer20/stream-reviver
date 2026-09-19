@@ -179,6 +179,8 @@ The Chrome E2E and soak tests temporarily add only their random localhost origin
 
 Run `npm run test:firefox:e2e` with `geckodriver` on PATH (or `GECKODRIVER_BIN` set). To test store signing and upgrades, run `node scripts/firefox-e2e.mjs --package /absolute/path/new-signed.xpi --previous /absolute/path/previous-signed.xpi --report artifacts/firefox-upgrade-report.json`. The previous version's settings, site configuration, and browser grant must survive the upgrade before behavioral checks run.
 
+Mozilla reviewers can extract the release source ZIP, run `npm ci` and `npm run build:source`, and inspect `dist/source-archive/firefox`. The archive includes source-inventory/build-identity metadata, so no private Git repository is needed. `npm run verify:source` verifies this exact archive-only rebuild against both packaged browsers. Normal repository builds and release packaging retain clean Git and tag requirements.
+
 The Browser E2E workflow installs Chrome for Testing and uses its explicit binary path for both behavioral and soak tests. Regular Google Chrome 137+ does not support the `--load-extension` flag used by these harnesses. For local runs, set `CHROME_BIN` to a Chrome for Testing or Chromium executable if automatic discovery cannot find one.
 
 ## Load in Chrome

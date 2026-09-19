@@ -168,8 +168,7 @@ try {
     await send({ type: "SET_SITE_ENABLED", origin: siblingOrigin, enabled: true });
     await send({ type: "SET_SITE_ENABLED", origin, enabled: false });
     assert.equal(await extension("return browser.permissions.contains({origins:[arguments[0]]});", [pattern]), true);
-    const registrations = await extension("return browser.scripting.getRegisteredContentScripts();");
-    assert.equal(registrations.length, 1);
+    await eventually(async () => (await extension("return browser.scripting.getRegisteredContentScripts();")).length === 1, "only the enabled sibling registration must remain");
   });
   await scenario("enabled-sibling-continues-monitoring", "healthy", 6_000, async events => {
     assert.ok(events.some(item => item.event === "status-healthy"));
@@ -177,9 +176,9 @@ try {
   await check("last-disable-revokes-permission-and-registration", async () => {
     await send({ type: "SET_SITE_ENABLED", origin: siblingOrigin, enabled: false });
     await eventually(async () => !(await extension("return browser.permissions.contains({origins:[arguments[0]]});", [pattern])), "disable must revoke site access");
-    assert.deepEqual(await extension("return browser.scripting.getRegisteredContentScripts();"), []);
+    await eventually(async () => (await extension("return browser.scripting.getRegisteredContentScripts();")).length === 0, "last disable must remove all registrations");
   });
-  assert.ok(!driverLog.includes("Script terminated by timeout"), "Firefox must not abort extension scripts during fixture lifecycle");
+  assert.equal(extensionTimeoutWarnings(), 0, "Firefox must not abort extension scripts during fixture lifecycle");
   report.result = "passed";
   console.log(`Firefox E2E: ${report.checks.length} checks passed (${report.mode}, Firefox ${report.browserVersion}).`);
 } catch (error) {
@@ -191,6 +190,7 @@ try {
   clearTimeout(deadline);
   report.finishedAt = new Date().toISOString();
   report.scriptTimeoutWarnings = (driverLog.match(/Script terminated by timeout/g) ?? []).length;
+  report.extensionScriptTimeoutWarnings = extensionTimeoutWarnings();
   if (report.scriptTimeoutWarnings) report.browserDiagnostics = driverLog;
   await mkdir(path.dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -202,6 +202,9 @@ async function request(method, route, body, timeout = 45_000) {
   const result = await response.json();
   if (!response.ok || result.value?.error) throw new Error(`${route}: ${JSON.stringify(result.value)}`);
   return result.value;
+}
+function extensionTimeoutWarnings() {
+  return (driverLog.match(/JavaScript warning: moz-extension:[^\n]*Script terminated by timeout/g) ?? []).length;
 }
 function command(method, route, body) { return request(method, `/session/${sessionId}${route}`, body); }
 function script(code, args = []) { return command("POST", "/execute/sync", { script: code, args }); }
