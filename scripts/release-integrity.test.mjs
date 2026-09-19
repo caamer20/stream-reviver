@@ -16,6 +16,8 @@ import {
 // only this test process; production release commands keep their environment.
 delete process.env.STREAM_REVIVER_EXPECTED_TAG;
 delete process.env.GITHUB_REF;
+delete process.env.GITHUB_REF_TYPE;
+delete process.env.GITHUB_REF_NAME;
 
 const root = await mkdtemp(path.join(os.tmpdir(), "stream-reviver-release-policy-test-"));
 try {
