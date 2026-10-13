@@ -204,5 +204,19 @@
   "dashboardStateRecoveryPaused": { "message": "Recovery paused" },
   "dashboardStateMaximizeBlocked": { "message": "Action needed" },
   "dashboardStateError": { "message": "Needs attention" },
-  "dashboardStateUnknown": { "message": "Status unavailable" }
+  "dashboardStateUnknown": { "message": "Status unavailable" },
+  "dashboardStaleNotice": { "message": "Displayed data is from the last successful update. Tab actions are unavailable until status refreshes." },
+  "dashboardSearchLabel": { "message": "Find a site" },
+  "dashboardClearFilters": { "message": "Clear filters" },
+  "dashboardFilterNote": { "message": "Search by hostname. Overview totals always include all available records." },
+  "dashboardSiteFilter": { "message": "Site coverage" },
+  "dashboardAllSites": { "message": "All sites" },
+  "dashboardMonitorFilter": { "message": "Stream status" },
+  "dashboardAllStreams": { "message": "All streams" },
+  "dashboardShowMore": { "message": "Show more" },
+  "dashboardRecentLimit": { "message": "Shows up to 50 recent recovery events from local history." },
+  "dashboardSnapshotLimit": { "message": "The overview includes up to 500 configured sites and 100 fresh monitors." },
+  "dashboardNoMatches": { "message": "No matches. Try another hostname or clear the filters." },
+  "dashboardShowingCount": { "message": "Showing $1 of $2" },
+  "dashboardFilterAnnouncement": { "message": "$1 matching sites, $2 matching streams, and $3 matching events." }
 }

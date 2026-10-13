@@ -224,6 +224,10 @@ Expected checks:
 
 Open **Mission Control** from the popup or settings to see all configured sites, fresh active monitors, and recent recovery outcomes in one local dashboard. Mission Control intentionally shows hostnames rather than full page URLs.
 
+Search Mission Control by hostname, filter site coverage or stream status, and choose **Show more** to expand a list. Counts show how many matching records are displayed; overview totals remain independent of filters. The snapshot includes up to 500 configured sites, 100 fresh monitors, and 50 recent recovery events. Keyboard focus survives live updates, polling pauses while the page is hidden, and tab actions are disabled if the displayed status becomes stale.
+
+To restore a settings backup, select its JSON file in Settings and choose **Review import**. Stream Reviver validates the backup and previews the exact replacement, including missing defaults and removed configurations. Applying the replacement disables current sites and imports each site disabled; re-enable them individually to approve access. If a deactivation or save fails, the page reports the partial result and reloads saved settings before another review.
+
 ## Permission model
 
 - `storage`: compact global defaults in browser-managed sync storage; per-site origins/selectors/rules, acknowledgements, bounded history, profiles, and outcome models in local storage; and expiring recovery/status state in session storage when supported. Per-site data is never placed in the synced settings record.

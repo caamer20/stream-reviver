@@ -120,7 +120,7 @@
           <div class="button-row">
             <button id="export-settings" type="button">Export settings</button>
             <label class="file-button">Choose import file<input id="import-file" type="file" accept="application/json,.json"></label>
-            <button id="import-settings" type="button" disabled>Import settings</button>
+            <button id="import-settings" type="button" disabled>Review import</button>
             <button id="reset-settings" class="danger" type="button">Reset defaults</button>
           </div>
           <fieldset>
@@ -189,6 +189,23 @@
         <p id="diagnostic-export-summary"></p>
         <pre id="diagnostic-export-preview" class="diagnostic-preview" tabindex="0" aria-label="Diagnostic export preview"></pre>
         <div class="button-row"><button value="cancel" type="submit">Cancel</button><button id="download-diagnostics" class="primary" type="button">Download reviewed bundle</button></div>
+      </form>
+    </dialog>
+    <dialog id="settings-import-dialog" aria-labelledby="settings-import-title">
+      <form method="dialog">
+        <h2 id="settings-import-title">Review settings replacement</h2>
+        <p id="settings-import-summary"></p>
+        <details class="import-review-details">
+          <summary>Missing defaults and affected sites</summary>
+          <p id="settings-import-defaults"></p>
+          <p id="settings-import-sites"></p>
+        </details>
+        <details class="import-review-details">
+          <summary>Exact replacement settings</summary>
+          <pre id="settings-import-preview" class="diagnostic-preview" tabindex="0" aria-label="Exact normalized settings replacement"></pre>
+        </details>
+        <p id="settings-import-status" role="status" aria-live="polite"></p>
+        <div class="button-row"><button id="cancel-settings-import" type="button">Cancel</button><button id="apply-settings-import" class="danger" type="button">Replace saved settings</button></div>
       </form>
     </dialog>
     <script src="options.js"></script>

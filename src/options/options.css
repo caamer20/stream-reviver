@@ -72,6 +72,9 @@ table { width: 100%; border-collapse: collapse; font-size: 12px; } th,td { paddi
 .option-check { display: flex; align-items: center; gap: 9px; min-height: 36px; padding: 5px 0; font-weight: 500; }
 .option-check input { width: 18px; height: 18px; accent-color: #7857e7; }
 .diagnostic-preview { max-height: min(45vh, 420px); overflow: auto; margin: 12px 0; border: 1px solid #343949; border-radius: 9px; padding: 12px; background: #0d1017; color: #cbd2df; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.import-review-details { margin: 14px 0; border-top: 1px solid #343949; padding-top: 12px; }
+.import-review-details summary { cursor: pointer; font-weight: 700; }
+.import-review-details summary:focus-visible { outline: 3px solid #c8baff; outline-offset: 3px; }
 .dirty-bar { position: fixed; left: 50%; bottom: 18px; z-index: 40; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; width: min(760px, calc(100vw - 32px)); transform: translateX(-50%); border: 1px solid #7357d5; border-radius: 12px; padding: 11px 13px; background: #242139; color: #f4f1ff; box-shadow: 0 16px 55px rgba(0,0,0,.45); }
 .dirty-bar span { color: #c6c0d9; font-size: 12px; }
 .disclaimer { border-color: #4b3f68; background: #1c1928; }

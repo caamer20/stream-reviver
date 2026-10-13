@@ -3,6 +3,7 @@ import { localizeDocument, message } from "../shared/i18n";
 import type { RuntimeMessage } from "../shared/types";
 import {
   formatRelativeTime,
+  filterDashboardState,
   getDashboardSummary,
   getMonitorPresentation,
   isDashboardState,
@@ -13,6 +14,7 @@ import {
   type DashboardActiveMonitor,
   type DashboardConfiguredSite,
   type DashboardRecoveryEvent,
+  type DashboardFilters,
   type DashboardState
 } from "./dashboard-model";
 
@@ -26,6 +28,17 @@ const el = {
   loading: byId<HTMLElement>("loading-state"),
   error: byId<HTMLElement>("error-state"),
   retry: byId<HTMLButtonElement>("retry-button"),
+  staleNotice: byId("stale-notice"),
+  search: byId<HTMLInputElement>("dashboard-search"),
+  siteFilter: byId<HTMLSelectElement>("site-filter"),
+  monitorFilter: byId<HTMLSelectElement>("monitor-filter"),
+  clearFilters: byId<HTMLButtonElement>("clear-filters"),
+  siteCount: byId("configured-sites-count"),
+  monitorCount: byId("active-monitors-count"),
+  recoveryCount: byId("recent-recoveries-count"),
+  moreSites: byId<HTMLButtonElement>("show-more-sites"),
+  moreMonitors: byId<HTMLButtonElement>("show-more-monitors"),
+  moreRecoveries: byId<HTMLButtonElement>("show-more-recoveries"),
   content: byId<HTMLElement>("dashboard-content"),
   lastUpdated: byId<HTMLTimeElement>("last-updated-time"),
   systemNotice: byId<HTMLElement>("system-notice"),
@@ -49,10 +62,40 @@ const el = {
 let refreshInFlight = false;
 let hasRenderedState = false;
 let lastSummarySignature = "";
+let latestState: DashboardState | null = null;
+let stale = false;
+let staleFocusKey: string | undefined;
+const visibleLimits = { sites: MAX_RENDERED_SITES, monitors: MAX_RENDERED_MONITORS, recoveries: MAX_RENDERED_RECOVERIES };
+const focusingMonitors = new Set<string>();
 
 localizeDocument();
 try { document.documentElement.lang = ext.i18n?.getUILanguage?.() || "en"; } catch { /* The declared English fallback remains. */ }
 el.retry.addEventListener("click", () => void refreshDashboard(true));
+el.search.addEventListener("input", applyFilters);
+el.siteFilter.addEventListener("change", applyFilters);
+el.monitorFilter.addEventListener("change", applyFilters);
+el.clearFilters.addEventListener("click", () => {
+  el.search.value = "";
+  el.siteFilter.value = "all";
+  el.monitorFilter.value = "all";
+  applyFilters();
+  el.search.focus();
+});
+for (const [button, key, batch] of [
+  [el.moreSites, "sites", MAX_RENDERED_SITES],
+  [el.moreMonitors, "monitors", MAX_RENDERED_MONITORS],
+  [el.moreRecoveries, "recoveries", MAX_RENDERED_RECOVERIES]
+] as const) {
+  button.addEventListener("click", () => {
+    visibleLimits[key] += batch;
+    renderLists();
+    if (button.hidden) {
+      const target = key === "sites" ? el.siteFilter : key === "monitors" ? el.monitorFilter : el.search;
+      target.focus();
+    }
+    announceListCounts();
+  });
+}
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") void refreshDashboard(false);
 });
@@ -64,17 +107,25 @@ async function initialize(): Promise<void> {
 }
 
 async function refreshDashboard(showLoading: boolean): Promise<void> {
+  if (!showLoading && document.visibilityState !== "visible") return;
   if (refreshInFlight) return;
   refreshInFlight = true;
   if (showLoading && !hasRenderedState) setView("loading");
   try {
     const response = await sendMessage<unknown>({ type: "GET_DASHBOARD_STATE" } satisfies RuntimeMessage);
     if (!isDashboardState(response)) throw new Error("Invalid dashboard response");
+    latestState = response;
+    stale = false;
     renderDashboard(response);
     hasRenderedState = true;
     setView("content");
   } catch {
+    stale = true;
+    const focusedAction = document.activeElement?.matches(".focus-tab");
+    if (focusedAction) staleFocusKey = (document.activeElement?.closest(".monitor-card") as HTMLElement)?.dataset.monitorKey;
+    el.activeMonitors.querySelectorAll<HTMLButtonElement>(".focus-tab").forEach((button) => { button.disabled = true; });
     setView("error");
+    if (focusedAction && document.visibilityState === "visible") el.retry.focus();
     announce(message("dashboardUnavailableAnnouncement", "Mission Control is unavailable. Try again."));
   } finally {
     refreshInFlight = false;
@@ -82,10 +133,18 @@ async function refreshDashboard(showLoading: boolean): Promise<void> {
 }
 
 function setView(view: "loading" | "error" | "content"): void {
+  const restoreErrorFocus = view === "content" && el.error.contains(document.activeElement);
   el.loading.hidden = view !== "loading";
   el.error.hidden = view !== "error";
   el.content.hidden = view === "loading" || (view === "error" && !hasRenderedState);
+  el.staleNotice.hidden = view !== "error" || !hasRenderedState;
   el.main.toggleAttribute("aria-busy", view === "loading");
+  if (restoreErrorFocus && document.visibilityState === "visible") {
+    const card = Array.from(el.activeMonitors.children).find((item) => (item as HTMLElement).dataset.monitorKey === staleFocusKey);
+    const button = card?.querySelector<HTMLButtonElement>(".focus-tab");
+    (button && !button.disabled ? button : el.monitorFilter).focus({ preventScroll: true });
+  }
+  if (view === "content") staleFocusKey = undefined;
 }
 
 function renderDashboard(state: DashboardState): void {
@@ -96,9 +155,8 @@ function renderDashboard(state: DashboardState): void {
   el.protectedCount.textContent = String(summary.protectedSites);
   renderLastUpdated(state.generatedAt);
   renderSystemNotice(state);
-  renderCoverage(state.configuredSites, summary.protectedSites);
-  renderMonitors(state.activeMonitors);
-  renderRecoveryEvents(state.recentRecoveries);
+  renderCoverageSummary(state.configuredSites.length, summary.protectedSites);
+  renderLists();
 
   const signature = `${summary.activeMonitors}:${summary.healthyMonitors}:${summary.attentionMonitors}:${summary.protectedSites}`;
   if (signature !== lastSummarySignature) {
@@ -133,11 +191,7 @@ function renderSystemNotice(state: DashboardState): void {
   }
 }
 
-function renderCoverage(sites: DashboardConfiguredSite[], protectedSites: number): void {
-  const visibleSites = sites.slice(0, MAX_RENDERED_SITES);
-  el.configuredSites.replaceChildren(...visibleSites.map(createSiteItem));
-  el.configuredSitesEmpty.hidden = sites.length !== 0;
-  const total = sites.length;
+function renderCoverageSummary(total: number, protectedSites: number): void {
   const coverageText = message(
     "dashboardCoverageCount",
     `${protectedSites} of ${total} protected`,
@@ -147,6 +201,53 @@ function renderCoverage(sites: DashboardConfiguredSite[], protectedSites: number
   el.coverageProgress.max = Math.max(1, total);
   el.coverageProgress.value = Math.min(protectedSites, el.coverageProgress.max);
   el.coverageProgress.setAttribute("aria-valuetext", coverageText);
+}
+
+function getFilters(): DashboardFilters {
+  return {
+    query: el.search.value,
+    siteStatus: el.siteFilter.value as DashboardFilters["siteStatus"],
+    monitorStatus: el.monitorFilter.value as DashboardFilters["monitorStatus"]
+  };
+}
+
+function applyFilters(): void {
+  visibleLimits.sites = MAX_RENDERED_SITES;
+  visibleLimits.monitors = MAX_RENDERED_MONITORS;
+  visibleLimits.recoveries = MAX_RENDERED_RECOVERIES;
+  renderLists();
+  announceListCounts();
+}
+
+function announceListCounts(): void {
+  if (!latestState) return;
+  const filtered = filterDashboardState(latestState, getFilters());
+  announce(message("dashboardFilterAnnouncement", `${filtered.configuredSites.length} matching sites, ${filtered.activeMonitors.length} matching streams, and ${filtered.recentRecoveries.length} matching events.`,
+    [String(filtered.configuredSites.length), String(filtered.activeMonitors.length), String(filtered.recentRecoveries.length)]));
+}
+
+function renderLists(): void {
+  if (!latestState) return;
+  const filtered = filterDashboardState(latestState, getFilters());
+  const sites = filtered.configuredSites.slice(0, visibleLimits.sites);
+  el.configuredSites.replaceChildren(...sites.map(createSiteItem));
+  renderListStatus(el.configuredSitesEmpty, el.siteCount, el.moreSites, sites.length, filtered.configuredSites.length,
+    latestState.configuredSites.length, "dashboardNoSites", "No sites are configured yet. Enable a site from the toolbar popup to see it here.");
+  renderMonitors(filtered.activeMonitors);
+  renderListStatus(el.activeMonitorsEmpty, el.monitorCount, el.moreMonitors, Math.min(visibleLimits.monitors, filtered.activeMonitors.length), filtered.activeMonitors.length,
+    latestState.activeMonitors.length, "dashboardNoMonitors", "No active streams right now. Open a configured site to begin monitoring.");
+  const events = filtered.recentRecoveries.slice(0, visibleLimits.recoveries);
+  el.recentRecoveries.replaceChildren(...events.map(createRecoveryEvent));
+  renderListStatus(el.recentRecoveriesEmpty, el.recoveryCount, el.moreRecoveries, events.length, filtered.recentRecoveries.length,
+    latestState.recentRecoveries.length, "dashboardNoRecoveries", "No recent recovery events. Quiet is good.");
+}
+
+function renderListStatus(empty: HTMLElement, count: HTMLElement, more: HTMLButtonElement, shown: number, matching: number, total: number, emptyKey: string, emptyFallback: string): void {
+  empty.hidden = matching !== 0;
+  empty.textContent = total === 0 ? message(emptyKey, emptyFallback)
+    : message("dashboardNoMatches", "No matches. Try another hostname or clear the filters.");
+  count.textContent = message("dashboardShowingCount", `Showing ${shown} of ${matching}`, [String(shown), String(matching)]);
+  more.hidden = shown >= matching;
 }
 
 function createSiteItem(site: DashboardConfiguredSite): HTMLLIElement {
@@ -179,48 +280,73 @@ function createSiteItem(site: DashboardConfiguredSite): HTMLLIElement {
 }
 
 function renderMonitors(monitors: DashboardActiveMonitor[]): void {
-  const visibleMonitors = monitors.slice(0, MAX_RENDERED_MONITORS);
-  el.activeMonitors.replaceChildren(...visibleMonitors.map(createMonitorCard));
-  el.activeMonitorsEmpty.hidden = monitors.length !== 0;
+  const visibleMonitors = monitors.slice(0, visibleLimits.monitors);
+  const focused = document.activeElement instanceof HTMLButtonElement && document.activeElement.matches(".focus-tab")
+    ? document.activeElement : null;
+  const existing = new Map(Array.from(el.activeMonitors.children).map((card) => [(card as HTMLElement).dataset.monitorKey, card as HTMLElement]));
+  let cursor = el.activeMonitors.firstElementChild;
+  for (const monitor of visibleMonitors) {
+    const key = monitorKey(monitor);
+    const card = existing.get(key) ?? createMonitorCard(monitor);
+    updateMonitorCard(card, monitor);
+    if (card !== cursor) el.activeMonitors.insertBefore(card, cursor);
+    cursor = card.nextElementSibling;
+    existing.delete(key);
+  }
+  for (const card of existing.values()) card.remove();
+  if (focused && document.visibilityState === "visible") {
+    if (!focused.isConnected) el.monitorFilter.focus();
+    else if (document.activeElement !== focused && !focused.disabled) focused.focus({ preventScroll: true });
+  }
 }
 
 function createMonitorCard(monitor: DashboardActiveMonitor): HTMLElement {
-  const presentation = getMonitorPresentation(monitor.state);
-  const safeHost = privacySafeSiteLabel(monitor.host, monitor.origin);
   const card = document.createElement("article");
   card.className = "monitor-card";
+  card.dataset.monitorKey = monitorKey(monitor);
 
   const header = document.createElement("div");
   header.className = "monitor-card-header";
   const title = document.createElement("h3");
-  title.textContent = safeHost;
   const status = document.createElement("span");
-  status.className = `status-chip tone-${presentation.tone}`;
-  status.textContent = message(presentation.i18nKey, presentation.label);
+  status.className = "status-chip";
   header.append(title, status);
 
   const detail = document.createElement("p");
   detail.className = "monitor-detail";
-  detail.textContent = privacySafeDetail(monitor.detail, monitor.state);
 
   const metadata = document.createElement("dl");
   metadata.className = "monitor-meta";
-  addDefinition(metadata, message("dashboardConfidence", "Confidence"), formatConfidence(monitor.confidence));
-  addDefinition(
-    metadata,
-    message("dashboardRecoveryStep", "Recovery step"),
-    monitor.recoveryAction ? recoveryActionLabel(monitor.recoveryAction) : message("dashboardNoRecoveryStep", "None")
-  );
-  addDefinition(metadata, message("dashboardLastCheck", "Last check"), formatRelativeTime(monitor.updatedAt));
 
   const focus = document.createElement("button");
   focus.type = "button";
   focus.className = "focus-tab";
   focus.textContent = message("dashboardFocusTab", "Focus tab");
-  focus.setAttribute("aria-label", message("dashboardFocusSiteTab", `Focus the ${safeHost} tab`, safeHost));
-  focus.addEventListener("click", () => void focusDashboardTab(monitor.tabId, safeHost, focus));
+  focus.addEventListener("click", () => void focusDashboardTab(monitor.tabId, privacySafeSiteLabel(monitor.host, monitor.origin), focus, monitorKey(monitor)));
   card.append(header, detail, metadata, focus);
   return card;
+}
+
+function monitorKey(monitor: DashboardActiveMonitor): string {
+  return `${monitor.tabId}:${monitor.origin}`;
+}
+
+function updateMonitorCard(card: HTMLElement, monitor: DashboardActiveMonitor): void {
+  const presentation = getMonitorPresentation(monitor.state);
+  const safeHost = privacySafeSiteLabel(monitor.host, monitor.origin);
+  card.querySelector("h3")!.textContent = safeHost;
+  const status = card.querySelector<HTMLElement>(".status-chip")!;
+  status.className = `status-chip tone-${presentation.tone}`;
+  status.textContent = message(presentation.i18nKey, presentation.label);
+  card.querySelector(".monitor-detail")!.textContent = privacySafeDetail(monitor.detail, monitor.state);
+  const metadata = card.querySelector<HTMLDListElement>(".monitor-meta")!;
+  metadata.replaceChildren();
+  addDefinition(metadata, message("dashboardConfidence", "Confidence"), formatConfidence(monitor.confidence));
+  addDefinition(metadata, message("dashboardRecoveryStep", "Recovery step"), monitor.recoveryAction ? recoveryActionLabel(monitor.recoveryAction) : message("dashboardNoRecoveryStep", "None"));
+  addDefinition(metadata, message("dashboardLastCheck", "Last check"), formatRelativeTime(monitor.updatedAt));
+  const focus = card.querySelector<HTMLButtonElement>(".focus-tab")!;
+  focus.setAttribute("aria-label", message("dashboardFocusSiteTab", `Focus the ${safeHost} tab`, safeHost));
+  focus.disabled = stale || focusingMonitors.has(monitorKey(monitor));
 }
 
 function addDefinition(list: HTMLDListElement, termText: string, detailText: string): void {
@@ -231,12 +357,6 @@ function addDefinition(list: HTMLDListElement, termText: string, detailText: str
   detail.textContent = detailText;
   group.append(term, detail);
   list.append(group);
-}
-
-function renderRecoveryEvents(events: DashboardRecoveryEvent[]): void {
-  const visibleEvents = events.slice(0, MAX_RENDERED_RECOVERIES);
-  el.recentRecoveries.replaceChildren(...visibleEvents.map(createRecoveryEvent));
-  el.recentRecoveriesEmpty.hidden = events.length !== 0;
 }
 
 function createRecoveryEvent(event: DashboardRecoveryEvent): HTMLLIElement {
@@ -260,8 +380,9 @@ function createRecoveryEvent(event: DashboardRecoveryEvent): HTMLLIElement {
   return item;
 }
 
-async function focusDashboardTab(tabId: number, safeHost: string, button: HTMLButtonElement): Promise<void> {
-  if (!Number.isInteger(tabId) || tabId < 0) return;
+async function focusDashboardTab(tabId: number, safeHost: string, button: HTMLButtonElement, key: string): Promise<void> {
+  if (stale || focusingMonitors.has(key) || !Number.isInteger(tabId) || tabId < 0) return;
+  focusingMonitors.add(key);
   button.disabled = true;
   try {
     const response = await sendMessage<{ ok?: boolean }>({ type: "FOCUS_DASHBOARD_TAB", tabId } satisfies RuntimeMessage);
@@ -270,7 +391,8 @@ async function focusDashboardTab(tabId: number, safeHost: string, button: HTMLBu
   } catch {
     announce(message("dashboardFocusFailed", "That monitored tab is no longer available."));
   } finally {
-    button.disabled = false;
+    focusingMonitors.delete(key);
+    button.disabled = stale;
   }
 }
 

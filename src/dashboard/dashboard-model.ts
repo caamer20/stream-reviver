@@ -11,6 +11,34 @@ export interface DashboardSummary {
   protectedSites: number;
 }
 
+export interface DashboardFilters {
+  query: string;
+  siteStatus: "all" | "protected" | "access-needed" | "off";
+  monitorStatus: "all" | "attention" | "healthy";
+}
+
+/** Search uses the same hostname-only label as rendering, never private URL data. */
+export function filterDashboardState(state: DashboardState, filters: DashboardFilters): DashboardState {
+  const query = filters.query.trim().toLocaleLowerCase();
+  const matchesHost = (item: { host: string; origin: string }): boolean =>
+    privacySafeSiteLabel(item.host, item.origin).toLocaleLowerCase().includes(query);
+  return {
+    ...state,
+    configuredSites: state.configuredSites.filter((site) => matchesHost(site) && (
+      filters.siteStatus === "all"
+      || (filters.siteStatus === "protected" && site.enabled && site.permissionGranted)
+      || (filters.siteStatus === "access-needed" && site.enabled && !site.permissionGranted)
+      || (filters.siteStatus === "off" && !site.enabled)
+    )),
+    activeMonitors: state.activeMonitors.filter((monitor) => matchesHost(monitor) && (
+      filters.monitorStatus === "all"
+      || (filters.monitorStatus === "attention" && ATTENTION_STATES.has(monitor.state))
+      || (filters.monitorStatus === "healthy" && monitor.state === "HEALTHY")
+    )),
+    recentRecoveries: state.recentRecoveries.filter(matchesHost)
+  };
+}
+
 export interface MonitorPresentation {
   label: string;
   detail: string;

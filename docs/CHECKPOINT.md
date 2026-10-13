@@ -1,6 +1,8 @@
 # Release checkpoint — 3.1.6
 
-Date: 2026-09-19. Firefox 3.1.6 is approved and publicly available; this is not a claim that every production-readiness gate is complete. Immutable tag `v3.1.6` identifies commit `7e514be935275c6bf203e539eb1a031c4c74275f`; later main changes only maintain tests/workflow/documentation.
+Date: 2026-09-19. Firefox 3.1.6 is approved and publicly available; this is not a claim that every production-readiness gate is complete. Immutable tag `v3.1.6` identifies commit `7e514be935275c6bf203e539eb1a031c4c74275f` and remains the source for the approved package.
+
+The unreleased workspace adds validated/reviewed settings import and Mission Control search, filters, expandable lists, focus preservation, and visibility/freshness handling. These changes require a future release and do not change the approved 3.1.6 package. See the Unreleased changelog and current test matrix for their scope.
 
 ## Changes
 

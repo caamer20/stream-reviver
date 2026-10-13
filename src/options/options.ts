@@ -2,7 +2,8 @@ import { apiCall, ext, originPattern, sendMessage } from "../shared/api";
 import { DEFAULT_SETTINGS, DISCLAIMER } from "../shared/defaults";
 import { createDiagnosticExport } from "../shared/diagnostic-export";
 import { localizeDocument } from "../shared/i18n";
-import { getDisclaimerAcknowledged, getSettings, normalizeSettings, SETTINGS_STORAGE_KEYS, setSettings } from "../shared/settings";
+import { getDisclaimerAcknowledged, getSettings, SETTINGS_STORAGE_KEYS, setSettings } from "../shared/settings";
+import { applySettingsImport, MAX_SETTINGS_IMPORT_BYTES, prepareSettingsImport, type SettingsImportReview } from "../shared/settings-import";
 import { normalizeProfile, profileToSiteOverrides } from "../shared/profiles";
 import type { DataClearTarget, GlobalSettings, HistoryEvent, RecoveryAction, RuntimeMessage, SelectorField, SelectorValidationResult, Settings, SiteProfile, SiteSettings } from "../shared/types";
 
@@ -59,7 +60,12 @@ const siteEditor = byId("site-editor");
 const feedback = byId("feedback");
 let settings: Settings = structuredClone(DEFAULT_SETTINGS);
 let selectedOrigin: string | null = null;
-let pendingImport: unknown = null;
+let pendingImport: SettingsImportReview | null = null;
+let importReadVersion = 0;
+let importBusy = false;
+let settingsMutations = 0;
+let importReviewSnapshot = "";
+let importReviewPrivacy = false;
 let history: HistoryEvent[] = [];
 let profiles: SiteProfile[] = [];
 let visualPrivacyAcknowledged = false;
@@ -86,13 +92,13 @@ async function initialize(): Promise<void> {
 }
 
 function bindEvents(): void {
-  byId("save-global").addEventListener("click", () => void saveGlobal());
+  byId("save-global").addEventListener("click", () => void runSettingsMutation(saveGlobal));
   byId<HTMLInputElement>("settings-search").addEventListener("input", filterSettings);
   byId("basic-mode").addEventListener("click", () => void setSettingsMode("basic"));
   byId("advanced-mode").addEventListener("click", () => void setSettingsMode("advanced"));
-  byId("add-site").addEventListener("click", () => void addSite());
-  byId("save-site").addEventListener("click", () => void saveSite());
-  byId("remove-site").addEventListener("click", () => void removeSite());
+  byId("add-site").addEventListener("click", () => void runSettingsMutation(addSite));
+  byId("save-site").addEventListener("click", () => void runSettingsMutation(saveSite));
+  byId("remove-site").addEventListener("click", () => void runSettingsMutation(removeSite));
   siteList.addEventListener("change", () => {
     const next = siteList.value || null;
     if (dirtyScopes.has("site") && next !== selectedOrigin && !confirm("Discard unsaved changes for the current site?")) {
@@ -107,20 +113,23 @@ function bindEvents(): void {
   byId("export-settings").addEventListener("click", exportSettings);
   byId<HTMLInputElement>("import-file").addEventListener("change", readImportFile);
   byId("import-settings").addEventListener("click", () => void importSettings());
-  byId("reset-settings").addEventListener("click", () => void resetSettings());
+  byId("apply-settings-import").addEventListener("click", () => void applyReviewedImport());
+  byId("cancel-settings-import").addEventListener("click", () => byId<HTMLDialogElement>("settings-import-dialog").close());
+  byId("settings-import-dialog").addEventListener("cancel", (event) => { if (importBusy) event.preventDefault(); });
+  byId("reset-settings").addEventListener("click", () => void runSettingsMutation(resetSettings));
   byId("export-diagnostics").addEventListener("click", exportDiagnostics);
   byId("download-diagnostics").addEventListener("click", downloadDiagnosticExport);
   for (const id of ["diagnostic-include-origins", "diagnostic-include-paths", "diagnostic-include-selectors", "diagnostic-include-browser"]) {
     byId(id).addEventListener("change", refreshDiagnosticPreview);
   }
-  byId("clear-diagnostics").addEventListener("click", () => void clearDiagnostics());
-  document.querySelectorAll<HTMLButtonElement>("[data-clear]").forEach((button) => button.addEventListener("click", () => void clearLocalData(button.dataset.clear as Exclude<DataClearTarget, "all">)));
-  byId("delete-all-data").addEventListener("click", () => void deleteAllData());
+  byId("clear-diagnostics").addEventListener("click", () => void runSettingsMutation(clearDiagnostics));
+  document.querySelectorAll<HTMLButtonElement>("[data-clear]").forEach((button) => button.addEventListener("click", () => void runSettingsMutation(() => clearLocalData(button.dataset.clear as Exclude<DataClearTarget, "all">))));
+  byId("delete-all-data").addEventListener("click", () => void runSettingsMutation(deleteAllData));
   byId("profile-from-site").addEventListener("click", profileFromSite);
-  byId("save-profile").addEventListener("click", () => void saveProfile());
-  byId("apply-profile").addEventListener("click", () => void applyProfile());
+  byId("save-profile").addEventListener("click", () => void runSettingsMutation(saveProfile));
+  byId("apply-profile").addEventListener("click", () => void runSettingsMutation(applyProfile));
   byId("export-profile").addEventListener("click", exportProfile);
-  byId("delete-profile").addEventListener("click", () => void deleteProfile());
+  byId("delete-profile").addEventListener("click", () => void runSettingsMutation(deleteProfile));
   byId<HTMLSelectElement>("profile-list").addEventListener("change", renderSelectedProfile);
   byId("acknowledge").addEventListener("click", async () => {
     await sendMessage({ type: "ACKNOWLEDGE_DISCLAIMER" } satisfies RuntimeMessage);
@@ -130,13 +139,13 @@ function bindEvents(): void {
   byId("main-content").addEventListener("input", markDirtyFromEvent);
   byId("main-content").addEventListener("change", markDirtyFromEvent);
   window.addEventListener("beforeunload", (event) => {
-    if (!dirtyScopes.size) return;
+    if (!dirtyScopes.size && !importBusy) return;
     event.preventDefault();
   });
   ext.storage.onChanged.addListener((changes, area) => {
     const settingsChanged = (area === "sync" && !!changes[SETTINGS_STORAGE_KEYS.global])
       || (area === "local" && !!changes[SETTINGS_STORAGE_KEYS.sites]);
-    if (!settingsChanged || reloading) return;
+    if (!settingsChanged || reloading || importBusy) return;
     if (dirtyScopes.size) {
       externalSettingsPending = true;
       renderDirtyState();
@@ -487,19 +496,106 @@ async function removeSite(): Promise<void> {
 }
 
 function exportSettings(): void { downloadJson(settings, `stream-reviver-settings-${dateStamp()}.json`); showFeedback("Settings exported."); }
+async function runSettingsMutation(operation: () => Promise<void>): Promise<void> {
+  if (importBusy) return;
+  settingsMutations += 1;
+  try { await operation(); } finally { settingsMutations -= 1; }
+}
 async function readImportFile(event: Event): Promise<void> {
-  const file = (event.target as HTMLInputElement).files?.[0]; pendingImport = null; byId<HTMLButtonElement>("import-settings").disabled = true; if (!file) return;
-  try { pendingImport = JSON.parse(await file.text()); byId<HTMLButtonElement>("import-settings").disabled = false; showFeedback("Import file ready."); }
-  catch (error) { showError(new Error(`Invalid JSON file: ${String(error)}`)); }
+  if (importBusy) return;
+  const version = ++importReadVersion;
+  const file = (event.target as HTMLInputElement).files?.[0];
+  pendingImport = null;
+  byId<HTMLButtonElement>("import-settings").disabled = true;
+  if (!file) return;
+  try {
+    if (file.size > MAX_SETTINGS_IMPORT_BYTES) throw new Error("Settings backup is too large (maximum 1 MB).");
+    const text = await file.text();
+    if (version !== importReadVersion || importBusy) return;
+    const review = prepareSettingsImport(JSON.parse(text));
+    pendingImport = review;
+    byId<HTMLButtonElement>("import-settings").disabled = false;
+    showFeedback("Settings backup validated. Review the replacement before applying.");
+  } catch (error) { if (version === importReadVersion) showError(error); }
 }
 async function importSettings(): Promise<void> {
-  if (!pendingImport) return;
+  if (!pendingImport || importBusy) return;
+  if (settingsMutations || reloading) { showError(new Error("Wait for the current settings operation to finish before importing.")); return; }
+  if (dirtyScopes.size) { showError(new Error("Save or discard unsaved changes before reviewing an import.")); return; }
+  // Freeze the page while reading saved settings so another click cannot save a draft.
+  importBusy = true;
+  byId("main-content").inert = true;
   try {
-    for (const [origin, site] of Object.entries(settings.perSite)) if (site.enabled) await sendMessage({ type: "SET_SITE_ENABLED", origin, enabled: false } satisfies RuntimeMessage);
-    const imported = normalizeSettings(pendingImport); for (const site of Object.values(imported.perSite)) site.enabled = false;
-    settings = await setSettings(imported); selectedOrigin = null; pendingImport = null; byId<HTMLButtonElement>("import-settings").disabled = true; await reload();
-    showFeedback("Settings imported. Re-enable each site to grant access.");
+    const current = await getSettings();
+    const privacy = await sendMessage<{ visualPrivacyAcknowledged: boolean }>({ type: "GET_PRIVACY_STATE" } satisfies RuntimeMessage);
+    importReviewPrivacy = privacy.visualPrivacyAcknowledged;
+    importReviewSnapshot = JSON.stringify(current);
+    const importedOrigins = Object.keys(pendingImport.settings.perSite);
+    const removedOrigins = Object.keys(current.perSite).filter((origin) => !importedOrigins.includes(origin));
+    const enabledOrigins = Object.keys(current.perSite).filter((origin) => current.perSite[origin].enabled);
+    byId("settings-import-summary").textContent = `Replace all saved global settings and site configurations. Disable ${enabledOrigins.length} currently enabled site(s) and request removal of their access. Import ${importedOrigins.length} site(s), all disabled. Remove ${removedOrigins.length} current site configuration(s). Fill ${pendingImport.defaultedFields.length} missing global setting(s) with current defaults. Backup schema: ${pendingImport.sourceVersion}. History and profiles are retained. Re-enable sites individually to grant access. Visual monitoring remains subject to this browser's privacy acknowledgement.`;
+    const fieldLabels = new Map<string, string>(scalarFields.map((field) => [String(field.key), field.label]));
+    fieldLabels.set("enabled", "Extension enabled");
+    fieldLabels.set("recoveryStrategy", "Recovery actions");
+    fieldLabels.set("recoveryBackoffSeconds", "Recovery retry delays");
+    byId("settings-import-defaults").textContent = pendingImport.defaultedFields.length ? `Use current defaults for: ${pendingImport.defaultedFields.map((key) => fieldLabels.get(key) ?? key).join(", ")}.` : "All global fields are supplied by the backup.";
+    byId("settings-import-sites").textContent = `Currently enabled: ${enabledOrigins.join(", ") || "none"}. Removed configurations: ${removedOrigins.join(", ") || "none"}.`;
+    if (!importReviewPrivacy) {
+      pendingImport.settings.enableVisualWatchdog = false;
+      for (const site of Object.values(pendingImport.settings.perSite)) if (site.enableVisualWatchdog) site.enableVisualWatchdog = false;
+    }
+    byId<HTMLButtonElement>("apply-settings-import").disabled = false;
+    byId("settings-import-preview").textContent = JSON.stringify(pendingImport.settings, null, 2);
+    byId("settings-import-status").textContent = "Review the exact normalized replacement in the details above. Numeric values are bounded to supported limits.";
+    byId<HTMLDialogElement>("settings-import-dialog").showModal();
   } catch (error) { showError(error); }
+  finally { importBusy = false; byId("main-content").inert = false; }
+}
+async function applyReviewedImport(): Promise<void> {
+  if (!pendingImport || importBusy) return;
+  if (settingsMutations || reloading) { showError(new Error("Wait for the current settings operation to finish before importing.")); return; }
+  if (dirtyScopes.size) { byId("settings-import-status").textContent = "Save or discard unsaved changes before importing."; return; }
+  importBusy = true;
+  ++importReadVersion;
+  byId("main-content").inert = true;
+  byId<HTMLButtonElement>("apply-settings-import").disabled = true;
+  byId<HTMLButtonElement>("cancel-settings-import").disabled = true;
+  byId("settings-import-status").textContent = "Disabling current sites and saving the reviewed replacement…";
+  let failure: unknown;
+  let applied = false;
+  try {
+    const current = await getSettings();
+    if (JSON.stringify(current) !== importReviewSnapshot) throw new Error("Saved settings changed after review. Cancel and review the import again before applying.");
+    const privacy = await sendMessage<{ visualPrivacyAcknowledged: boolean }>({ type: "GET_PRIVACY_STATE" } satisfies RuntimeMessage);
+    if (privacy.visualPrivacyAcknowledged !== importReviewPrivacy) throw new Error("Privacy acknowledgement changed after review. Cancel and review the import again.");
+    await applySettingsImport(pendingImport.settings, current, {
+      disableSite: (origin) => sendMessage<{ ok: boolean; error?: string }>({ type: "SET_SITE_ENABLED", origin, enabled: false } satisfies RuntimeMessage),
+      write: setSettings
+    });
+    applied = true;
+    selectedOrigin = null;
+    pendingImport = null;
+    byId<HTMLInputElement>("import-file").value = "";
+    byId<HTMLButtonElement>("import-settings").disabled = true;
+  } catch (error) { failure = error; }
+  // Always recover the authoritative saved state, including partial site deactivation.
+  try { await reload(); }
+  catch (error) { failure = new Error(`${failure instanceof Error ? failure.message : applied ? "Replacement saved." : "Import stopped."} Could not reload saved state: ${String(error)}. Reload this page before continuing.`); }
+  finally {
+    importBusy = false;
+    byId("main-content").inert = false;
+    byId<HTMLButtonElement>("apply-settings-import").disabled = false;
+    byId<HTMLButtonElement>("cancel-settings-import").disabled = false;
+  }
+  if (failure) {
+    byId("settings-import-status").textContent = failure instanceof Error ? failure.message : String(failure);
+    // Prevent a retry against an obsolete review after any failed operation.
+    byId<HTMLButtonElement>("apply-settings-import").disabled = true;
+    showError(failure);
+  } else {
+    byId<HTMLDialogElement>("settings-import-dialog").close();
+    showFeedback("Settings imported. All imported sites are disabled; re-enable each site to grant access.");
+  }
 }
 async function resetSettings(): Promise<void> {
   if (!confirm("Reset settings, local history, and all configured site access?")) return;

@@ -8,7 +8,7 @@
 
 `npm run test:e2e` loads the real Chrome MV3 build in one isolated profile and runs 21 scenarios against deterministic localhost media while using the production runtime-message, optional-permission, dynamic-registration, and background paths:
 
-1. popup layout at 390×600, settings navigation, and Mission Control layout/live state;
+1. popup layout at 390×600, settings navigation, Mission Control search/filter/expansion, keyboard focus across live updates and stale recovery, hidden/resumed polling, and validated/reviewed settings import;
 2. healthy playback without reload;
 3. disable/re-enable lifecycle reinjection without navigation;
 4. primary selection over a muted preview;
@@ -31,6 +31,8 @@
 21. per-site post-refresh maximize opt-out without disabling automatic recovery.
 
 The reload path additionally has deterministic unit coverage for exact route hashes, primary-frame leases, one-use action nonces, one nonterminal action per tab, settings/control races, content acknowledgement retries, countdown ownership, and fail-closed deadline expiry. The top-frame paint/continuity rule is exercised through the real extension countdown path; a background alarm is never treated as a second navigation executor.
+
+Settings-import unit coverage verifies backup bounds, schema migration, invalid-file rejection before mutation, sequential checked site deactivation, and partial disable/write failures. Browser coverage checks invalid input, exact normalized preview, cancellation, rejected deactivation, and successful replacement with monitoring disabled. Dashboard coverage searches beyond the initial 100-site batch and confirms filtering leaves overview totals unchanged. The hidden-page polling assertion simulates `visibilityState` in the isolated headless document; human tab-switch behavior remains part of the manual matrix.
 
 `npm run lint:firefox` runs Mozilla's official add-on linter on the generated Firefox build. `npm run test:firefox` runs that lint and then verifies that Firefox can install the manifest as a temporary add-on in a headless smoke session. Full Firefox behavioral parity, action-popup behavior, signed-package upgrade, and long-lived playback remain human/beta gates because the Chrome CDP-specific scenario harness does not drive Firefox extension internals.
 

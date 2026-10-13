@@ -4,6 +4,8 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 ## [Unreleased]
 
+- Validate settings backups before import and review the exact normalized replacement, missing defaults, removed configurations, and site deactivation. Check each deactivation before saving, preserve unsaved drafts, and explain partial failures.
+- Add hostname search, coverage/status filters, visible result counts, and expandable lists to Mission Control. Preserve keyboard focus during live updates, pause polling while hidden, and disable tab actions when displayed data is stale.
 - External beta, long-duration soak, independent security review, and browser-store review remain release gates.
 
 ## [3.1.6] - 2026-09-19

@@ -40,6 +40,7 @@
         <div>
           <h2 data-i18n="dashboardErrorTitle">Mission Control is unavailable</h2>
           <p data-i18n="dashboardErrorDetail">The extension background did not respond. Your monitoring settings have not changed.</p>
+          <p id="stale-notice" hidden data-i18n="dashboardStaleNotice">Displayed data is from the last successful update. Tab actions are unavailable until status refreshes.</p>
           <button id="retry-button" type="button" data-i18n="dashboardRetry">Try again</button>
         </div>
       </section>
@@ -79,6 +80,13 @@
           </dl>
         </section>
 
+        <div class="dashboard-tools" role="search" aria-labelledby="dashboard-search-label">
+          <label for="dashboard-search" id="dashboard-search-label" data-i18n="dashboardSearchLabel">Find a site</label>
+          <input id="dashboard-search" type="search" maxlength="253" autocomplete="off" spellcheck="false" aria-controls="configured-sites active-monitors recent-recoveries">
+          <button id="clear-filters" type="button" data-i18n="dashboardClearFilters">Clear filters</button>
+          <p data-i18n="dashboardFilterNote">Search by hostname. Overview totals always include all available records.</p>
+        </div>
+
         <div class="dashboard-grid">
           <section class="panel coverage-panel" aria-labelledby="coverage-heading">
             <div class="section-heading">
@@ -90,8 +98,18 @@
             </div>
             <progress id="coverage-progress" max="1" value="0" aria-labelledby="coverage-heading coverage-summary"></progress>
             <p class="privacy-note"><span aria-hidden="true">●</span> <span data-i18n="dashboardPrivacyNote">Only hostnames are shown. Page paths, queries, and fragments stay out of Mission Control.</span></p>
-            <ul id="configured-sites" class="site-list"></ul>
+            <div class="list-filter">
+              <label for="site-filter" data-i18n="dashboardSiteFilter">Site coverage</label>
+              <select id="site-filter" aria-controls="configured-sites">
+                <option value="all" data-i18n="dashboardAllSites">All sites</option>
+                <option value="protected" data-i18n="dashboardCoverageProtected">Protected</option>
+                <option value="access-needed" data-i18n="dashboardCoverageAccessNeeded">Access needed</option>
+                <option value="off" data-i18n="dashboardCoverageOff">Off</option>
+              </select>
+            </div>
+            <ul id="configured-sites" class="site-list" tabindex="0" aria-labelledby="coverage-heading"></ul>
             <p id="configured-sites-empty" class="empty-state" hidden data-i18n="dashboardNoSites">No sites are configured yet. Enable a site from the toolbar popup to see it here.</p>
+            <div class="list-footer"><p id="configured-sites-count"></p><button id="show-more-sites" type="button" data-i18n="dashboardShowMore">Show more</button></div>
           </section>
 
           <section class="panel monitors-panel" aria-labelledby="monitors-heading">
@@ -101,8 +119,17 @@
                 <h2 id="monitors-heading" data-i18n="dashboardMonitorsHeading">Active streams</h2>
               </div>
             </div>
+            <div class="list-filter">
+              <label for="monitor-filter" data-i18n="dashboardMonitorFilter">Stream status</label>
+              <select id="monitor-filter" aria-controls="active-monitors">
+                <option value="all" data-i18n="dashboardAllStreams">All streams</option>
+                <option value="attention" data-i18n="dashboardNeedAttention">Need attention</option>
+                <option value="healthy" data-i18n="dashboardHealthyMonitors">Healthy</option>
+              </select>
+            </div>
             <div id="active-monitors" class="monitor-grid"></div>
             <p id="active-monitors-empty" class="empty-state" hidden data-i18n="dashboardNoMonitors">No active streams right now. Open a configured site to begin monitoring.</p>
+            <div class="list-footer"><p id="active-monitors-count"></p><button id="show-more-monitors" type="button" data-i18n="dashboardShowMore">Show more</button></div>
           </section>
 
           <section class="panel recoveries-panel" aria-labelledby="recoveries-heading">
@@ -112,8 +139,10 @@
                 <h2 id="recoveries-heading" data-i18n="dashboardRecoveriesHeading">Recovery events</h2>
               </div>
             </div>
-            <ol id="recent-recoveries" class="recovery-list"></ol>
+            <ol id="recent-recoveries" class="recovery-list" tabindex="0" aria-labelledby="recoveries-heading"></ol>
             <p id="recent-recoveries-empty" class="empty-state" hidden data-i18n="dashboardNoRecoveries">No recent recovery events. Quiet is good.</p>
+            <div class="list-footer"><p id="recent-recoveries-count"></p><button id="show-more-recoveries" type="button" data-i18n="dashboardShowMore">Show more</button></div>
+            <p class="privacy-note" data-i18n="dashboardRecentLimit">Shows up to 50 recent recovery events from local history.</p>
           </section>
         </div>
       </div>
@@ -123,6 +152,7 @@
 
     <footer>
       <p data-i18n="dashboardLocalOnly">Mission Control uses extension data stored locally in this browser.</p>
+      <p data-i18n="dashboardSnapshotLimit">The overview includes up to 500 configured sites and 100 fresh monitors.</p>
     </footer>
     <script src="dashboard.js"></script>
   </body>

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   formatRelativeTime,
+  filterDashboardState,
   getDashboardSummary,
   isDashboardState,
   privacySafeDetail,
@@ -40,6 +41,36 @@ test("dashboard derives its summary from privacy-safe state", () => {
     attentionMonitors: 1,
     protectedSites: 1
   });
+});
+
+test("dashboard filters coverage and monitor status independently without changing snapshot totals", () => {
+  const state = sampleState();
+  const filters = { query: "", siteStatus: "all", monitorStatus: "all" } as const;
+  assert.deepEqual(filterDashboardState(state, filters), state);
+  for (const [siteStatus, expected] of [["protected", "healthy"], ["access-needed", "permission"], ["off", "off"]] as const) {
+    const filtered = filterDashboardState(state, { ...filters, siteStatus });
+    assert.equal(filtered.configuredSites.length, 1);
+    assert.match(filtered.configuredSites[0].host, new RegExp(expected));
+    assert.equal(filtered.activeMonitors.length, 3);
+  }
+  assert.deepEqual(filterDashboardState(state, { ...filters, monitorStatus: "healthy" }).activeMonitors.map((item) => item.tabId), [1]);
+  assert.deepEqual(filterDashboardState(state, { ...filters, monitorStatus: "attention" }).activeMonitors.map((item) => item.tabId), [2]);
+  assert.equal(state.configuredSites.length, 3);
+  assert.equal(getDashboardSummary(state).protectedSites, 1);
+});
+
+test("dashboard hostname search never matches private URL data or monitor details", () => {
+  const state = sampleState();
+  const query = (value: string) => filterDashboardState(state, { query: value, siteStatus: "all", monitorStatus: "all" });
+  assert.equal(query("  HEALTHY.EXAMPLE ").activeMonitors.length, 1);
+  assert.equal(query("warning.example").recentRecoveries.length, 1);
+  assert.equal(query("Trying media reload").activeMonitors.length, 0);
+  state.configuredSites[0].host = "https://healthy.example/private?secret=42";
+  state.configuredSites[0].origin = "https://user:password@healthy.example/hidden#secret";
+  assert.equal(query("secret").configuredSites.length, 0);
+  assert.equal(query("password").configuredSites.length, 0);
+  assert.equal(query("healthy.example").configuredSites.length, 1);
+  assert.equal(query("not-found.invalid").recentRecoveries.length, 0);
 });
 
 test("dashboard site labels never expose URL paths, queries, fragments, or credentials", () => {

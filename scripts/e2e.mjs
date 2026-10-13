@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { cp, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
@@ -178,39 +178,45 @@ try {
     }
   });
 
-  await setTestSettings(debugPort, origin, {
-    recoveryStrategy: ["RETRY_BUTTON", "PAGE_RELOAD"],
-    errorSelector: ".simulated-stream-error",
-    retryButtonSelector: ".retry-stream"
-  });
-  await scenario(debugPort, "dangerous-control", 8_000, async (events) => {
-    assert.ok(events.some((item) => item.detail.includes("Access or consent interruption")), "sensitive modal context should be recognized");
-    assert.ok(!events.some((item) => item.event === "recovery-step"), "matching controls inside sensitive dialogs must not be clicked");
-  });
-  await scenario(debugPort, "recovery", 11_000, async (events) => {
-    assert.ok(events.some((item) => item.event === "recovery-step" && item.metadata?.action === "RETRY_BUTTON"), "configured retry control should be used");
-    assert.ok(events.some((item) => item.event === "status-healthy"), "retry action should restore playback");
-    assert.ok(!events.some((item) => item.event === "page-reload"), "successful soft recovery should avoid page reload");
-  });
+  if (!enabledScenarios.size || enabledScenarios.has("dangerous-control") || enabledScenarios.has("recovery")) {
+    await setTestSettings(debugPort, origin, {
+      recoveryStrategy: ["RETRY_BUTTON", "PAGE_RELOAD"],
+      errorSelector: ".simulated-stream-error",
+      retryButtonSelector: ".retry-stream"
+    });
+    await scenario(debugPort, "dangerous-control", 8_000, async (events) => {
+      assert.ok(events.some((item) => item.detail.includes("Access or consent interruption")), "sensitive modal context should be recognized");
+      assert.ok(!events.some((item) => item.event === "recovery-step"), "matching controls inside sensitive dialogs must not be clicked");
+    });
+    await scenario(debugPort, "recovery", 11_000, async (events) => {
+      assert.ok(events.some((item) => item.event === "recovery-step" && item.metadata?.action === "RETRY_BUTTON"), "configured retry control should be used");
+      assert.ok(events.some((item) => item.event === "status-healthy"), "retry action should restore playback");
+      assert.ok(!events.some((item) => item.event === "page-reload"), "successful soft recovery should avoid page reload");
+    });
+  }
 
-  await setTestSettings(debugPort, origin, { recoveryStrategy: ["PAGE_RELOAD"], errorSelector: "", retryButtonSelector: "" });
-  await scenario(debugPort, "error", 8_000, async (events, target) => {
-    assert.equal(events.filter((item) => item.event === "page-reload").length, 1, "loop protection should limit the test to one automatic reload");
-    assert.ok(events.some((item) => item.event === "post-refresh-maximize"), "an automatic reload should trigger the default-on maximize handoff");
-    const maximizeState = await evaluateTarget(target, `({nativeFullscreen:!!document.fullscreenElement,cssMaximized:!!document.querySelector('.stream-reviver-maximized')})`);
-    assert.ok(maximizeState.nativeFullscreen || maximizeState.cssMaximized,
-      `the refreshed stream should be fullscreen or use the safe CSS fallback: ${JSON.stringify(maximizeState)}`);
-  });
+  if (!enabledScenarios.size || enabledScenarios.has("error")) {
+    await setTestSettings(debugPort, origin, { recoveryStrategy: ["PAGE_RELOAD"], errorSelector: "", retryButtonSelector: "" });
+    await scenario(debugPort, "error", 8_000, async (events, target) => {
+      assert.equal(events.filter((item) => item.event === "page-reload").length, 1, "loop protection should limit the test to one automatic reload");
+      assert.ok(events.some((item) => item.event === "post-refresh-maximize"), "an automatic reload should trigger the default-on maximize handoff");
+      const maximizeState = await evaluateTarget(target, `({nativeFullscreen:!!document.fullscreenElement,cssMaximized:!!document.querySelector('.stream-reviver-maximized')})`);
+      assert.ok(maximizeState.nativeFullscreen || maximizeState.cssMaximized,
+        `the refreshed stream should be fullscreen or use the safe CSS fallback: ${JSON.stringify(maximizeState)}`);
+    });
+  }
 
-  await setTestSettings(debugPort, origin, {
-    recoveryStrategy: ["PAGE_RELOAD"], errorSelector: "", retryButtonSelector: "", autoMaximize: false
-  });
-  await scenario(debugPort, "error-maximize-off", 8_000, async (events, target) => {
-    assert.equal(events.filter((item) => item.event === "page-reload").length, 1, "turning off maximize must not disable automatic page recovery");
-    assert.ok(!events.some((item) => item.event === "post-refresh-maximize"), "the per-site opt-out must suppress post-refresh maximize");
-    const maximizeState = await evaluateTarget(target, `({nativeFullscreen:!!document.fullscreenElement,cssMaximized:!!document.querySelector('.stream-reviver-maximized')})`);
-    assert.deepEqual(maximizeState, { nativeFullscreen: false, cssMaximized: false }, "the opt-out must leave the refreshed page layout unchanged");
-  }, "error");
+  if (!enabledScenarios.size || enabledScenarios.has("error-maximize-off")) {
+    await setTestSettings(debugPort, origin, {
+      recoveryStrategy: ["PAGE_RELOAD"], errorSelector: "", retryButtonSelector: "", autoMaximize: false
+    });
+    await scenario(debugPort, "error-maximize-off", 8_000, async (events, target) => {
+      assert.equal(events.filter((item) => item.event === "page-reload").length, 1, "turning off maximize must not disable automatic page recovery");
+      assert.ok(!events.some((item) => item.event === "post-refresh-maximize"), "the per-site opt-out must suppress post-refresh maximize");
+      const maximizeState = await evaluateTarget(target, `({nativeFullscreen:!!document.fullscreenElement,cssMaximized:!!document.querySelector('.stream-reviver-maximized')})`);
+      assert.deepEqual(maximizeState, { nativeFullscreen: false, cssMaximized: false }, "the opt-out must leave the refreshed page layout unchanged");
+    }, "error");
+  }
 
   console.log(`Browser E2E: ${executedScenarios} scenario(s) passed with real extension APIs and deterministic local media fixtures.`);
 } catch (error) {
@@ -309,6 +315,414 @@ async function popupScenario(debugPort) {
     assert.equal(dashboardLayout.summaryCards, 4, "Mission Control should render all summary cards");
     assert.equal(dashboardLayout.localOnly, true, "Mission Control should retain its local-data privacy notice");
     assert.equal(dashboardLayout.horizontalOverflow, false, "Mission Control should fit a desktop viewport without horizontal overflow");
+
+    // Exercise the dashboard's list controls against real browser state. Synthetic
+    // origins are disabled and have no permissions, so this cannot register page
+    // scripts or grant access to the fixture domains.
+    const syntheticOrigins = Array.from({ length: 105 }, (_, index) =>
+      `https://e2e-site-${String(index).padStart(3, "0")}.example`
+    );
+    const originalSites = await evaluateWorker(debugPort, `(async()=>{
+      const stored=await chrome.storage.local.get('streamReviverSiteSettingsV1');
+      return stored.streamReviverSiteSettingsV1??{};
+    })()`);
+    const seeded = await evaluateWorker(debugPort, `(async()=>{
+      const record=structuredClone(${JSON.stringify(originalSites)});
+      if(!record||!record.perSite||typeof record.perSite!=='object') throw new Error('Unexpected stored site settings record');
+      for (const origin of ${JSON.stringify(syntheticOrigins)}) {
+        record.perSite[origin]={enabled:false};
+      }
+      await chrome.storage.local.set({'streamReviverSiteSettingsV1':record});
+      return true;
+    })()`);
+    assert.equal(seeded, true, "synthetic disabled origins should be seeded in the local site settings record");
+    const seededReadModel = await evaluateWorker(debugPort, `chrome.runtime.sendMessage({type:'GET_DASHBOARD_STATE'})`);
+    assert.equal(seededReadModel?.configuredSites?.length, 106, "the background read model should contain all 106 real configured origins");
+    let renderedSiteCount = "";
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      renderedSiteCount = await evaluateTarget(dashboard, `document.getElementById('configured-sites-count')?.textContent||''`);
+      if (/100.*106|106.*100/.test(renderedSiteCount)) break;
+      await wait(100);
+    }
+    assert.match(renderedSiteCount, /100.*106|106.*100/, "Mission Control should render all configured sites from its latest poll");
+
+    const listControls = await evaluateTarget(dashboard, `(()=>({
+      search:!!document.getElementById('dashboard-search'),
+      siteFilter:!!document.getElementById('site-filter'),
+      monitorFilter:!!document.getElementById('monitor-filter'),
+      clear:!!document.getElementById('clear-filters'),
+      siteCount:document.getElementById('configured-sites-count')?.textContent||'',
+      monitorCount:document.getElementById('active-monitors-count')?.textContent||'',
+      recoveryCount:document.getElementById('recent-recoveries-count')?.textContent||'',
+      protectedTotal:document.getElementById('protected-site-count')?.textContent||'',
+      showMoreSites:!!document.getElementById('show-more-sites')
+    }))()`);
+    assert.equal(listControls.search, true, "Mission Control should expose hostname search");
+    assert.equal(listControls.siteFilter, true, "Mission Control should expose site status filtering");
+    assert.equal(listControls.monitorFilter, true, "Mission Control should expose monitor status filtering");
+    assert.equal(listControls.clear, true, "Mission Control should expose a clear-filters action");
+    assert.match(listControls.siteCount, /100.*106|106.*100/, "site count should disclose the initial bounded batch and total");
+    assert.equal(listControls.protectedTotal, "1", "filtering and batching must not alter the global protected-site total");
+    assert.ok(listControls.monitorCount.length > 0, "monitor count should be available");
+    assert.ok(listControls.recoveryCount.length > 0, "recovery count should be available");
+    assert.equal(listControls.showMoreSites, true, "a second bounded site batch should be available");
+
+    const searched = await evaluateTarget(dashboard, `(()=>{
+      const input=document.getElementById('dashboard-search');
+      input.value='e2e-site-104'; input.dispatchEvent(new Event('input',{bubbles:true}));
+      const rows=[...document.querySelectorAll('#configured-sites li')];
+      return {rows:rows.map((row)=>row.textContent),count:document.getElementById('configured-sites-count')?.textContent||'',
+        labels:[...document.querySelectorAll('#configured-sites .site-host')].map((node)=>node.textContent)};
+    })()`);
+    assert.equal(searched.rows.length, 1, "hostname search should find a site outside the initially rendered batch");
+    assert.ok(searched.rows[0].includes("e2e-site-104.example"), "search result should match the hostname");
+    assert.ok(searched.labels.every((label)=>!/[/?#]/.test(label)), "site labels should not expose URL paths, queries, or fragments");
+    const noMatch = await evaluateTarget(dashboard, `(()=>{
+      const input=document.getElementById('dashboard-search');
+      input.value='no-such-host.invalid'; input.dispatchEvent(new Event('input',{bubbles:true}));
+      return {rows:document.querySelectorAll('#configured-sites li').length,empty:document.getElementById('configured-sites-empty')?.hidden===false};
+    })()`);
+    assert.equal(noMatch.rows, 0, "unmatched hostname search should hide all site rows");
+    assert.equal(noMatch.empty, true, "unmatched hostname search should show a no-results state");
+    await evaluateTarget(dashboard, `document.getElementById('clear-filters').click()`);
+
+    const siteStatusFilters = await evaluateTarget(dashboard, `(()=>{
+      const filter=document.getElementById('site-filter');
+      filter.value='protected'; filter.dispatchEvent(new Event('change',{bubbles:true}));
+      const protectedRows=[...document.querySelectorAll('#configured-sites li')];
+      filter.value='off'; filter.dispatchEvent(new Event('change',{bubbles:true}));
+      const offRows=[...document.querySelectorAll('#configured-sites li')];
+      return {protectedCount:protectedRows.length,protectedLabels:protectedRows.map((row)=>row.querySelector('.coverage-status')?.textContent),
+        offCount:offRows.length,offLabels:offRows.map((row)=>row.querySelector('.coverage-status')?.textContent)};
+    })()`);
+    assert.equal(siteStatusFilters.protectedCount, 1, "protected filter should retain only the enabled fixture origin");
+    assert.ok(siteStatusFilters.protectedLabels.every((label)=>label==='Protected'), "protected filter results should have protected status");
+    assert.equal(siteStatusFilters.offCount, 100, "off filter should keep the rendered batch bounded");
+    assert.ok(siteStatusFilters.offLabels.every((label)=>label==='Off'), "off filter results should have off status");
+    const offCount = await evaluateTarget(dashboard, `document.getElementById('configured-sites-count')?.textContent||''`);
+    assert.match(offCount, /100.*105/, "off filter count should disclose all 105 matching disabled sites");
+    await evaluateTarget(dashboard, `document.getElementById('clear-filters').click()`);
+
+    const expanded = await evaluateTarget(dashboard, `(()=>{
+      document.getElementById('show-more-sites').click();
+      return {count:document.getElementById('configured-sites-count')?.textContent||'',rows:document.querySelectorAll('#configured-sites li').length};
+    })()`);
+    assert.equal(expanded.rows, 106, "show more should reveal the next bounded site batch");
+    assert.match(expanded.count, /106.*106/, "expanded site count should disclose that every site is visible");
+
+    // Open a real monitored fixture so the keyboard/focus path uses the actual
+    // dashboard cards produced by the background.
+    const monitorFixture = await createTarget(debugPort, `${origin}/test-page.html?mode=healthy`);
+    let dashboardState = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      dashboardState = await evaluateWorker(debugPort, `chrome.runtime.sendMessage({type:'GET_DASHBOARD_STATE'})`);
+      if (dashboardState?.activeMonitors?.length) break;
+      await wait(150);
+    }
+    // Opening the player target hides Mission Control. Bring the dashboard back
+    // to the foreground so its visibility-aware poll can refresh from the
+    // background state before checking for the card.
+    await bringTargetToFront(dashboard);
+    let monitorObservation = null;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      monitorObservation = await evaluateTarget(dashboard, `({visibility:document.visibilityState,count:document.querySelectorAll('#active-monitors .monitor-card').length})`);
+      if (monitorObservation.visibility === 'visible' && monitorObservation.count > 0) break;
+      await wait(150);
+    }
+    assert.ok(monitorObservation?.visibility === 'visible' && monitorObservation.count > 0,
+      `a real fixture monitor should appear in visible Mission Control; dashboard=${JSON.stringify(monitorObservation)} background=${JSON.stringify(dashboardState)}`);
+
+    // Count actual production state requests to prove two render cycles keep
+    // the active keyboard target stable without relying on fixed-duration waits.
+    await evaluateTarget(dashboard, `(()=>{
+      window.__e2eOriginalSendMessage=chrome.runtime.sendMessage;
+      window.__e2eDashboardReads=0;
+      window.__e2ePendingDashboardReads=0;
+      window.__e2eFailDashboardRead=false;
+      chrome.runtime.sendMessage=function(message,...args){
+        if(message?.type!=='GET_DASHBOARD_STATE') return window.__e2eOriginalSendMessage.apply(chrome.runtime,[message,...args]);
+        window.__e2eDashboardReads+=1;
+        const callback=typeof args.at(-1)==='function'?args.at(-1):null;
+        if(window.__e2eFailDashboardRead){
+          if(callback){queueMicrotask(()=>callback(undefined));return undefined;}
+          return Promise.reject(new Error('E2E forced refresh failure'));
+        }
+        window.__e2ePendingDashboardReads+=1;
+        if(callback){
+          args[args.length-1]=(...values)=>{window.__e2ePendingDashboardReads=Math.max(0,window.__e2ePendingDashboardReads-1);callback(...values);};
+          return window.__e2eOriginalSendMessage.call(chrome.runtime,message,...args);
+        }
+        const result=window.__e2eOriginalSendMessage.call(chrome.runtime,message,...args);
+        return Promise.resolve(result).finally(()=>{window.__e2ePendingDashboardReads=Math.max(0,window.__e2ePendingDashboardReads-1);});
+      };
+    })()`);
+    const focusPersistence = await evaluateTarget(dashboard, `(()=>{
+      const button=document.querySelector('#active-monitors .focus-tab');
+      if(!button) return {focused:false};
+      button.focus();
+      return {focused:document.activeElement===button,host:button.closest('.monitor-card')?.querySelector('h3')?.textContent||''};
+    })()`);
+    assert.equal(focusPersistence.focused, true, "monitor focus button should receive keyboard focus");
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const polls = await evaluateTarget(dashboard, `({reads:window.__e2eDashboardReads,pending:window.__e2ePendingDashboardReads})`);
+      if (polls.reads >= 2 && polls.pending === 0) break;
+      await wait(150);
+    }
+    const keptFocus = await evaluateTarget(dashboard, `({focused:document.activeElement?.matches?.('#active-monitors .focus-tab')===true,disabled:document.activeElement?.disabled===true})`);
+    const completedDashboardPolls = await evaluateTarget(dashboard, `({reads:window.__e2eDashboardReads,pending:window.__e2ePendingDashboardReads})`);
+    assert.ok(completedDashboardPolls.reads >= 2 && completedDashboardPolls.pending === 0, "focus verification requires at least two completed production refreshes");
+    assert.equal(keptFocus.focused, true, "focused monitor action should survive two dashboard polling renders");
+    assert.equal(keptFocus.disabled, false, "successful polls should leave the preserved focus action enabled");
+    await setTargetViewport(dashboard, 1280, 900);
+    await evaluateTarget(dashboard, `window.scrollTo(0,0)`);
+    await captureTarget(dashboard, "artifacts/dashboard-operability.png");
+    await setTargetViewport(dashboard, 360, 800);
+    const narrowDashboard = await evaluateTarget(dashboard, `document.documentElement.scrollWidth<=document.documentElement.clientWidth`);
+    assert.equal(narrowDashboard, true, "dashboard filters and expanded lists must fit a narrow viewport");
+    await captureTarget(dashboard, "artifacts/dashboard-operability-narrow.png");
+
+    // The API call counter verifies that hidden pages stop polling and resume
+    // with a fresh read when made visible. visibilityState is overridden only
+    // inside this isolated E2E document because headless Chrome visibility is
+    // not reliably controllable through its window manager.
+    const hiddenPolling = await evaluateTarget(dashboard, `(()=>{
+      Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+      document.dispatchEvent(new Event('visibilitychange'));
+      return window.__e2eDashboardReads;
+    })()`);
+    await wait(3_500);
+    const hiddenReads = await evaluateTarget(dashboard, `window.__e2eDashboardReads`);
+    assert.equal(hiddenReads, hiddenPolling, "hidden Mission Control should pause background state polling");
+    await evaluateTarget(dashboard, `(()=>{
+      Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+      document.dispatchEvent(new Event('visibilitychange'));
+    })()`);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const pending = await evaluateTarget(dashboard, `({reads:window.__e2eDashboardReads,pending:window.__e2ePendingDashboardReads})`);
+      if (pending.reads > hiddenReads && pending.pending === 0) break;
+      await wait(100);
+    }
+    const resumedReads = await evaluateTarget(dashboard, `window.__e2eDashboardReads`);
+    assert.ok(resumedReads > hiddenReads, "returning Mission Control to visible should immediately refresh state");
+
+    await evaluateTarget(dashboard, `(()=>{window.__e2eFailDashboardRead=true})()`);
+    let staleState = null;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      staleState = await evaluateTarget(dashboard, `(()=>({
+        noteVisible:document.getElementById('stale-notice')?.hidden===false,
+        disabledFocusButtons:[...document.querySelectorAll('#active-monitors .focus-tab')].every((button)=>button.disabled),
+        retryFocused:document.activeElement?.id==='retry-button',
+        contentVisible:!document.getElementById('dashboard-content')?.hidden
+      }))()`);
+      if (staleState.noteVisible) break;
+      await wait(100);
+    }
+    assert.equal(staleState.noteVisible, true, "a failed refresh should label the retained dashboard data as stale");
+    assert.equal(staleState.disabledFocusButtons, true, "stale monitor cards should disable tab-focus actions");
+    assert.equal(staleState.retryFocused, true, "a failed refresh should move focus from the disabled monitor action to Retry");
+    assert.equal(staleState.contentVisible, true, "the last known dashboard data should remain visible during an error");
+    await evaluateTarget(dashboard, `(()=>{window.__e2eFailDashboardRead=false})()`);
+    await evaluateTarget(dashboard, `(()=>{
+      document.dispatchEvent(new Event('visibilitychange'));
+      return true;
+    })()`);
+    let recoveredState = null;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      recoveredState = await evaluateTarget(dashboard, `(()=>({
+        noteHidden:document.getElementById('stale-notice')?.hidden===true,
+        focusButtonsEnabled:[...document.querySelectorAll('#active-monitors .focus-tab')].every((button)=>!button.disabled),
+        restoredFocus:document.activeElement?.matches?.('#active-monitors .focus-tab')===true
+      }))()`);
+      if (recoveredState.noteHidden && recoveredState.restoredFocus) break;
+      await wait(100);
+    }
+    assert.equal(recoveredState.noteHidden, true, "a successful refresh should clear the stale-data notice");
+    assert.equal(recoveredState.focusButtonsEnabled, true, "a successful refresh should re-enable monitor focus actions");
+    assert.equal(recoveredState.restoredFocus, true, "a successful refresh should restore focus to the same monitor action after Retry");
+    await evaluateTarget(dashboard, `(()=>{
+      chrome.runtime.sendMessage=window.__e2eOriginalSendMessage;
+      delete window.__e2eOriginalSendMessage;
+      delete window.__e2eDashboardReads;
+      delete window.__e2eFailDashboardRead;
+    })()`);
+
+    const fallbackFilter = await evaluateTarget(dashboard, `(()=>{
+      const button=document.querySelector('#active-monitors .focus-tab');
+      button?.focus();
+      const state=button?.closest('.monitor-card')?.querySelector('.status-chip')?.textContent?.toLowerCase()||'';
+      const filter=document.getElementById('monitor-filter');
+      if(!filter) return {filter:false};
+      filter.value=state.includes('healthy')?'attention':'healthy';
+      filter.dispatchEvent(new Event('change',{bubbles:true}));
+      return {filter:true,focused:document.activeElement===filter,remaining:document.querySelectorAll('#active-monitors .monitor-card').length};
+    })()`);
+    assert.equal(fallbackFilter.filter, true, "monitor status filter should remain available");
+    assert.equal(fallbackFilter.focused, true, "removing the focused monitor card should move focus to its filter");
+    await evaluateTarget(dashboard, `document.getElementById('clear-filters').click()`);
+    await fetch(`http://127.0.0.1:${debugPort}/json/close/${monitorFixture.id}`);
+
+    await evaluateWorker(debugPort, `chrome.storage.local.set({'streamReviverSiteSettingsV1':${JSON.stringify(originalSites)}}).then(()=>true)`);
+    await wait(400);
+
+    const importPage = await createTarget(debugPort, `${extensionOrigin}/options.html?e2e=settings-import`);
+    await wait(800);
+    const importBefore = await evaluateWorker(debugPort, `(async()=>{
+      const [sync,local,permissions,registrations]=await Promise.all([
+        chrome.storage.sync.get('streamReviverSettings'),
+        chrome.storage.local.get('streamReviverSiteSettingsV1'),
+        chrome.permissions.getAll(),
+        chrome.scripting.getRegisteredContentScripts()
+      ]);
+      return {global:sync.streamReviverSettings,sites:local.streamReviverSiteSettingsV1,
+        origins:[...(permissions.origins||[])].sort(),registrations:registrations.map((item)=>item.id).sort()};
+    })()`);
+    const uploadSettingsFile = async (text, name) => evaluateTarget(importPage, `(()=>{
+      const input=document.getElementById('import-file');
+      const transfer=new DataTransfer();
+      transfer.items.add(new File([${JSON.stringify(text)}],${JSON.stringify(name)},{type:'application/json'}));
+      input.files=transfer.files;
+      input.dispatchEvent(new Event('change',{bubbles:true}));
+      return true;
+    })()`);
+    await uploadSettingsFile('{"arbitrary":"not a settings backup"}', 'arbitrary.json');
+    await wait(150);
+    const invalidImport = await evaluateTarget(importPage, `(()=>({
+      reviewDisabled:document.getElementById('import-settings')?.disabled===true,
+      feedback:document.getElementById('feedback')?.textContent||''
+    }))()`);
+    assert.equal(invalidImport.reviewDisabled, true, "unrecognized JSON should not open an import review");
+    assert.match(invalidImport.feedback, /Invalid settings backup/i, "invalid JSON should explain why it was rejected");
+    const afterInvalid = await evaluateWorker(debugPort, `(async()=>{
+      const [sync,local,permissions,registrations]=await Promise.all([
+        chrome.storage.sync.get('streamReviverSettings'),chrome.storage.local.get('streamReviverSiteSettingsV1'),
+        chrome.permissions.getAll(),chrome.scripting.getRegisteredContentScripts()
+      ]);
+      return {global:sync.streamReviverSettings,sites:local.streamReviverSiteSettingsV1,
+        origins:[...(permissions.origins||[])].sort(),registrations:registrations.map((item)=>item.id).sort()};
+    })()`);
+    assert.deepEqual(afterInvalid, importBefore, "invalid JSON must leave settings, access grants, and registrations unchanged");
+
+    const validBackup = {
+      schemaVersion: 4,
+      enabled: false,
+      stallTimeoutSeconds: 17,
+      recoveryStrategy: ["PAGE_RELOAD"],
+      perSite: { [origin]: { enabled: true, autoRecover: false } }
+    };
+    const validBackupText = JSON.stringify(validBackup, null, 2);
+    await uploadSettingsFile(validBackupText, 'stream-reviver-settings-e2e.json');
+    await wait(150);
+    const reviewOpened = await evaluateTarget(importPage, `document.getElementById('import-settings').click()`);
+    await wait(300);
+    const importReview = await evaluateTarget(importPage, `(()=>{
+      const preview=document.getElementById('settings-import-preview')?.textContent||'';
+      let normalized=null; try { normalized=JSON.parse(preview); } catch {}
+      return {open:document.getElementById('settings-import-dialog')?.open===true,
+        summary:document.getElementById('settings-import-summary')?.textContent||'',
+        defaults:document.getElementById('settings-import-defaults')?.textContent||'',
+        sites:document.getElementById('settings-import-sites')?.textContent||'',
+        status:document.getElementById('settings-import-status')?.textContent||'',
+        statusLive:document.getElementById('settings-import-status')?.getAttribute('role')==='status'&&document.getElementById('settings-import-status')?.getAttribute('aria-live')==='polite',
+        preview,normalized,canonical:normalized!==null&&preview===JSON.stringify(normalized,null,2)};
+    })()`);
+    assert.equal(reviewOpened, undefined, "review click should be handled by the settings page");
+    assert.equal(importReview.open, true, "valid settings backup should open a deliberate review dialog");
+    assert.ok(importReview.summary.includes("Replace all saved global settings"), "review should explain that import replaces current settings");
+    assert.ok(importReview.defaults.length > 0, "review should disclose fields filled from defaults");
+    assert.ok(importReview.sites.includes("Currently enabled"), "review should disclose currently enabled site configuration");
+    assert.equal(importReview.statusLive, true, "import review status should be announced accessibly");
+    assert.match(importReview.status, /Review the exact normalized replacement/i, "review status should identify the exact preview");
+    assert.equal(importReview.canonical, true, "review should show the exact canonical normalized JSON");
+    assert.equal(importReview.normalized.enabled, false, "review preview should include the imported global value");
+    assert.equal(importReview.normalized.stallTimeoutSeconds, 17, "review preview should retain supported imported values");
+    assert.equal(importReview.normalized.perSite[origin].enabled, false, "all imported origins must be disabled in the reviewed preview");
+    assert.equal(importReview.normalized.perSite[origin].autoRecover, false, "review preview should retain site-level settings");
+    await setTargetViewport(importPage, 1280, 1000);
+    await captureTarget(importPage, "artifacts/settings-import-review.png");
+    await evaluateTarget(importPage, `document.getElementById('cancel-settings-import').click()`);
+    await wait(150);
+    assert.deepEqual(
+      await evaluateWorker(debugPort, `(async()=>{const [sync,local,permissions,registrations]=await Promise.all([chrome.storage.sync.get('streamReviverSettings'),chrome.storage.local.get('streamReviverSiteSettingsV1'),chrome.permissions.getAll(),chrome.scripting.getRegisteredContentScripts()]);return{global:sync.streamReviverSettings,sites:local.streamReviverSiteSettingsV1,origins:[...(permissions.origins||[])].sort(),registrations:registrations.map((item)=>item.id).sort()}})()`),
+      importBefore,
+      "canceling review must not mutate settings, access grants, or registrations"
+    );
+
+    await evaluateTarget(importPage, `document.getElementById('import-settings').click()`);
+    await wait(150);
+    await evaluateTarget(importPage, `(()=>{
+      window.__e2eOriginalSendMessage=chrome.runtime.sendMessage;
+      chrome.runtime.sendMessage=function(message,...args){
+        if(message?.type==='SET_SITE_ENABLED'&&message.enabled===false){
+          const callback=typeof args.at(-1)==='function'?args.at(-1):null;
+          if(callback){queueMicrotask(()=>callback({ok:false,error:'E2E forced site deactivation refusal'}));return undefined;}
+          return Promise.resolve({ok:false,error:'E2E forced site deactivation refusal'});
+        }
+        return window.__e2eOriginalSendMessage.call(chrome.runtime,message,...args);
+      };
+    })()`);
+    await evaluateTarget(importPage, `document.getElementById('apply-settings-import').click()`);
+    await wait(500);
+    const rejectedApply = await evaluateTarget(importPage, `(()=>({
+      open:document.getElementById('settings-import-dialog')?.open===true,
+      status:document.getElementById('settings-import-status')?.textContent||'',
+      disabled:document.getElementById('apply-settings-import')?.disabled===true
+    }))()`);
+    assert.equal(rejectedApply.open, true, "a failed site deactivation should keep the import review open");
+    assert.match(rejectedApply.status, /E2E forced site deactivation refusal/, "a failed runtime response should be presented in the live import status");
+    assert.equal(rejectedApply.disabled, true, "a failed import review should disable unsafe retry until re-review");
+    const afterRejectedApply = await evaluateWorker(debugPort, `(async()=>{const [sync,local,permissions,registrations]=await Promise.all([chrome.storage.sync.get('streamReviverSettings'),chrome.storage.local.get('streamReviverSiteSettingsV1'),chrome.permissions.getAll(),chrome.scripting.getRegisteredContentScripts()]);return{global:sync.streamReviverSettings,sites:local.streamReviverSiteSettingsV1,origins:[...(permissions.origins||[])].sort(),registrations:registrations.map((item)=>item.id).sort()}})()`);
+    assert.deepEqual(afterRejectedApply, importBefore, "a rejected site deactivation must preserve saved settings, grants, and registrations");
+    await evaluateTarget(importPage, `(()=>{
+      chrome.runtime.sendMessage=window.__e2eOriginalSendMessage;
+      delete window.__e2eOriginalSendMessage;
+      document.getElementById('cancel-settings-import').click();
+    })()`);
+    await wait(150);
+    await evaluateTarget(importPage, `document.getElementById('import-settings').click()`);
+    await wait(150);
+    await evaluateTarget(importPage, `document.getElementById('apply-settings-import').click()`);
+    let appliedImport = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      appliedImport = await evaluateWorker(debugPort, `(async()=>{
+        const [sync,local,registrations]=await Promise.all([
+          chrome.storage.sync.get('streamReviverSettings'),chrome.storage.local.get('streamReviverSiteSettingsV1'),
+          chrome.scripting.getRegisteredContentScripts()
+        ]);
+        return {global:sync.streamReviverSettings?.settings,sites:local.streamReviverSiteSettingsV1?.perSite,
+          registrations:registrations.map((item)=>item.id)};
+      })()`);
+      if (appliedImport.global?.stallTimeoutSeconds === 17 && appliedImport.sites?.[origin]?.enabled === false) break;
+      await wait(200);
+    }
+    assert.equal(appliedImport.global?.enabled, false, "applying the reviewed import should persist imported global values");
+    assert.equal(appliedImport.global?.stallTimeoutSeconds, 17, "applying the reviewed import should persist numeric settings");
+    assert.equal(appliedImport.sites?.[origin]?.enabled, false, "applying the reviewed import should persist imported origins as disabled");
+    assert.equal(appliedImport.sites?.[origin]?.autoRecover, false, "applying the reviewed import should persist site-level values");
+    assert.ok(importBefore.registrations.every((id) => !appliedImport.registrations.includes(id)), "applying the import should unregister the previously active site");
+    const successfulApplyStatus = await evaluateTarget(importPage, `document.getElementById('feedback')?.textContent||''`);
+    assert.match(successfulApplyStatus, /Settings imported/, "successful import should report completion to the user");
+
+    // Restore this isolated E2E profile to its original setup. Restore storage
+    // records exactly, then use the production site-enable message to rebuild
+    // registrations for any site that was enabled before the import scenario.
+    const restored = await evaluateWorker(debugPort, `(async()=>{
+      const snapshot=${JSON.stringify(importBefore)};
+      await chrome.storage.sync.set({'streamReviverSettings':snapshot.global});
+      await chrome.storage.local.set({'streamReviverSiteSettingsV1':snapshot.sites});
+      await new Promise((resolve)=>setTimeout(resolve,100));
+      const enabled=Object.entries(snapshot.sites?.perSite||{}).filter(([,site])=>site.enabled);
+      for(const [siteOrigin] of enabled){
+        const parsed=new URL(siteOrigin);
+        const pattern=parsed.origin+'/*';
+        const has=await chrome.permissions.contains({origins:[pattern]});
+        if(!has&&!await chrome.permissions.request({origins:[pattern]})) throw new Error('Could not restore the E2E site grant');
+        const result=await chrome.runtime.sendMessage({type:'SET_SITE_ENABLED',origin:siteOrigin,enabled:true});
+        if(result?.ok!==true) throw new Error(result?.error||'Could not restore the E2E site registration');
+      }
+      return true;
+    })()`, true);
+    assert.equal(restored, true, "the isolated E2E browser should restore its original settings and site registration");
+    await fetch(`http://127.0.0.1:${debugPort}/json/close/${importPage.id}`);
     await fetch(`http://127.0.0.1:${debugPort}/json/close/${dashboard.id}`);
   }
   console.log("✓ browser scenario: popup");
@@ -409,6 +823,23 @@ async function setTargetViewport(target, width, height) {
     await withTimeout(cdp.send("Emulation.setDeviceMetricsOverride", {
       width, height, deviceScaleFactor: 1, mobile: false
     }), 5000, "CDP viewport override timed out");
+  } finally { cdp.close(); }
+}
+
+async function bringTargetToFront(target) {
+  const cdp = new Cdp(target.webSocketDebuggerUrl);
+  await withTimeout(cdp.open(), 5000, "CDP foreground connection timed out");
+  try { await withTimeout(cdp.send("Page.bringToFront"), 5000, "Could not bring browser target to front"); }
+  finally { cdp.close(); }
+}
+
+async function captureTarget(target, file) {
+  const cdp = new Cdp(target.webSocketDebuggerUrl);
+  await withTimeout(cdp.open(), 5000, "CDP screenshot connection timed out");
+  try {
+    const response = await withTimeout(cdp.send("Page.captureScreenshot", { format: "png" }), 5000, "UI screenshot timed out");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, Buffer.from(response.result.data, "base64"));
   } finally { cdp.close(); }
 }
 
