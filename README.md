@@ -6,7 +6,7 @@
 
 **A privacy-first recovery assistant for live video streams.**
 
-[![Version](https://img.shields.io/badge/version-3.1.6-6d5dfc)](package.json)
+[![Version](https://img.shields.io/badge/version-3.2.0-6d5dfc)](package.json)
 [![Manifest](https://img.shields.io/badge/Manifest-V3-00a67d)](https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/manifest.json/manifest_version)
 [![Chrome and Firefox](https://img.shields.io/badge/browsers-Chrome%20%7C%20Firefox-2563eb)](#install-for-local-development)
 [![Privacy](https://img.shields.io/badge/analytics-none-00a67d)](docs/PRIVACY.md)
@@ -167,7 +167,7 @@ npm run verify:reproducible
 - `npm run test:coverage`: enforces 90% lines, 85% branches, and 90% functions against executable test bundles.
 - `npm run test:performance`: enforces conservative throughput budgets for hot-path pure logic.
 - `npm run test:accessibility`: checks the localization, keyboard-focus, reduced-motion, forced-color, and semantic UI baseline.
-- `npm run test:firefox`: runs Mozilla's linter and installs the build temporarily in headless Firefox.
+- `npm run test:firefox`: runs Mozilla's linter directly and installs the build temporarily in a disposable headless Firefox profile through geckodriver.
 - `npm run test:soak:smoke`: keeps one Chromium process, profile, extension service worker, and fixture tab alive across a short healthy/churn/replacement/spoof cycle. It records garbage-collected page/worker heap, DOM/listener counts, Chrome RSS, target count, extension storage, bounded-history growth, browser version, and commit in `artifacts/soak-report.json`. `npm run test:soak -- --hours 24` uses the same long-lived harness for the release gate; `--scenario-seconds`, `--scenarios`, `--report`, and `--max-heap-growth-mb-per-hour` tune an explicitly recorded run.
 - `npm run release:check`: requires the pinned toolchain and a clean Git tree, then checks stable provenance, permissions, localization, a deny-by-default extension-page CSP, an AST-based no-egress policy with negative fixtures, package size, and SHA-256 inventory.
 - `npm run package`: creates deterministic Chrome/Firefox ZIPs, a source ZIP made only from explicitly allowlisted Git-tracked regular files, a CycloneDX 1.6 SBOM, and release metadata in `artifacts/`.
@@ -177,7 +177,7 @@ Development and beta provenance records the current tree as clean or dirty. Stab
 
 The Chrome E2E and soak tests temporarily add only their random localhost origin to a copied manifest because headless Chrome cannot accept an extension permission prompt. Firefox behavioral tests use geckodriver and a disposable profile; they seed a localhost optional grant through Firefox's permission store, then exercise production messages and dynamic registration. This does not test human permission prompts. Release manifests remain optional-permission-only.
 
-Run `npm run test:firefox:e2e` with `geckodriver` on PATH (or `GECKODRIVER_BIN` set). To test store signing and upgrades, run `node scripts/firefox-e2e.mjs --package /absolute/path/new-signed.xpi --previous /absolute/path/previous-signed.xpi --report artifacts/firefox-upgrade-report.json`. The previous version's settings, site configuration, and browser grant must survive the upgrade before behavioral checks run.
+Run `npm run test:firefox` and `npm run test:firefox:e2e` with Mozilla geckodriver 0.37.1 on PATH (or `GECKODRIVER_BIN` set). To test store signing and upgrades, run `node scripts/firefox-e2e.mjs --package /absolute/path/new-signed.xpi --previous /absolute/path/previous-signed.xpi --report artifacts/firefox-upgrade-report.json`. The previous version's settings, site configuration, and browser grant must survive the upgrade before behavioral checks run.
 
 Mozilla reviewers can extract the release source ZIP, run `npm ci` and `npm run build:source`, and inspect `dist/source-archive/firefox`. The archive includes source-inventory/build-identity metadata, so no private Git repository is needed. `npm run verify:source` verifies this exact archive-only rebuild against both packaged browsers. Normal repository builds and release packaging retain clean Git and tag requirements.
 
@@ -280,7 +280,7 @@ Stream Reviver does not bypass DRM, CAPTCHAs, paywalls, access controls, anti-bo
 
 ## Production status
 
-The approved 3.1.6 Firefox release fixes legacy diagnostic-export privacy and makes release archives byte-identical across macOS/Linux. Signed fresh installation and upgrade from 3.1.5 passed. See the [release checkpoint](docs/CHECKPOINT.md) and [release evidence](https://github.com/caamer20/stream-reviver/releases/tag/v3.1.6) for verification and outstanding gates. Each GitHub browser run retains its Firefox/soak reports and diagnostic/dashboard UI evidence. Browser automation does not replace independent review or consented field testing.
+The 3.2.0 GitHub release adds reviewed settings imports and Mission Control search, filters, expandable lists, focus preservation, and freshness handling. See the [release checkpoint](docs/CHECKPOINT.md) and [release evidence](https://github.com/caamer20/stream-reviver/releases/tag/v3.2.0) for verification and remaining external gates. The approved Firefox Add-ons version is a separate store distribution; 3.1.6's signed fresh installation and upgrade from 3.1.5 passed. Each GitHub browser run retains its Firefox/soak reports and diagnostic/dashboard UI evidence. Browser automation does not replace independent review or consented field testing.
 
 Published builds are available on [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/stream-reviver/). Broader release evidence—including a retained 24-hour soak report, field testing, independent security/privacy review, and signed-package upgrade testing—is tracked in the [release checklist](docs/RELEASE_CHECKLIST.md), [validation plan](docs/VALIDATION_PLAN.md), and [roadmap](ROADMAP.md). Local tests and store approval do not establish universal recovery success across websites.
 

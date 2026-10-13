@@ -1,6 +1,6 @@
 # Roadmap and release gates
 
-The 3.1 codebase is a release candidate when automated gates pass. Stable distribution additionally requires:
+The 3.2 codebase is a release candidate when automated gates pass. Store distribution and broader production sign-off additionally require:
 
 - a completed 24-hour browser soak with no extension errors, runaway memory growth, false reloads, or stuck discard protection;
 - a representative private beta of at least 20 consenting users or 500 monitored hours, with opt-in, manually exported aggregate results;

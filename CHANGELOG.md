@@ -4,9 +4,20 @@ All notable changes follow Keep a Changelog conventions. Versions use semantic v
 
 ## [Unreleased]
 
+- External beta, long-duration soak, independent security review, and browser-store review remain release gates.
+
+## [3.2.0] - 2026-10-12
+
+### Added
+
 - Validate settings backups before import and review the exact normalized replacement, missing defaults, removed configurations, and site deactivation. Check each deactivation before saving, preserve unsaved drafts, and explain partial failures.
 - Add hostname search, coverage/status filters, visible result counts, and expandable lists to Mission Control. Preserve keyboard focus during live updates, pause polling while hidden, and disable tab actions when displayed data is stale.
-- External beta, long-duration soak, independent security review, and browser-store review remain release gates.
+
+### Maintenance
+
+- Replace the Firefox build tool's unused Android/ADB dependency chain with direct Mozilla lint and a disposable geckodriver installation check. Update compatible build dependencies to close newly disclosed audit findings.
+- Retain viewport-emulation sessions throughout browser tests so current Linux Chrome preserves the required popup viewport and footer checks.
+- Expand browser verification for settings-import rejection, exact preview, cancellation, failed deactivation, and successful replacement, plus dashboard filtering, large lists, focus, visibility, and stale recovery.
 
 ## [3.1.6] - 2026-09-19
 

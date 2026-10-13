@@ -144,7 +144,7 @@ export async function inspectToolchain(root, packageJson = null) {
     npm: commandVersion("npm", ["--version"], root),
     esbuild: dependencyVersion("esbuild"),
     typescript: dependencyVersion("typescript"),
-    webExt: dependencyVersion("web-ext"),
+    addonsLinter: dependencyVersion("addons-linter"),
     packageManager: packageJson.packageManager ?? "unpinned"
   };
 }

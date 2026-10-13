@@ -9,6 +9,7 @@ const chromeBinary = await findChromeBinary();
 const allowSkip = process.argv.includes("--allow-skip");
 const enabledScenarios = new Set((process.env.E2E_SCENARIOS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
 let executedScenarios = 0;
+const viewportSessions = new Map();
 if (!chromeBinary) {
   const message = "Chrome for Testing or Chromium was not found; the browser E2E gate cannot run.";
   if (allowSkip) { console.log(`${message} Explicit --allow-skip accepted.`); process.exit(0); }
@@ -224,6 +225,8 @@ try {
   throw error;
 } finally {
   clearTimeout(hardTimeout);
+  for (const cdp of viewportSessions.values()) cdp.close();
+  viewportSessions.clear();
   if (chrome.exitCode === null && chrome.signalCode === null) {
     chrome.kill("SIGTERM");
     await Promise.race([
@@ -269,7 +272,8 @@ async function popupScenario(debugPort) {
     await fetch(`http://127.0.0.1:${debugPort}/json/close/${target.id}`).catch(() => undefined);
   }
   const popup = await createTarget(debugPort, `${extensionOrigin}/popup.html?e2e=1`);
-  await setTargetViewport(popup, 390, 600);
+  const popupMetrics = await setTargetViewport(popup, 390, 600);
+  console.log(`Popup CDP layout metrics: ${JSON.stringify(popupMetrics)}`);
   await wait(800);
   const layout = await evaluateTarget(popup, `(()=>{const body=document.body.getBoundingClientRect();const header=document.querySelector('header')?.getBoundingClientRect();const main=document.querySelector('main')?.getBoundingClientRect();const footer=document.querySelector('footer')?.getBoundingClientRect();return{width:body.width,height:body.height,viewportHeight:innerHeight,headerBottom:header?.bottom,mainTop:main?.top,mainBottom:main?.bottom,footerTop:footer?.top,footerBottom:footer?.bottom,footerVisible:!!footer&&footer.bottom<=innerHeight,settingsVisible:!!document.getElementById('open-settings')?.getClientRects().length,feedback:document.getElementById('feedback')?.textContent||''}})()`);
   console.log(`Popup layout: ${JSON.stringify(layout)}`);
@@ -817,13 +821,17 @@ async function evaluateTarget(target, expression) {
 }
 
 async function setTargetViewport(target, width, height) {
-  const cdp = new Cdp(target.webSocketDebuggerUrl);
-  await withTimeout(cdp.open(), 5000, "CDP viewport connection timed out");
-  try {
-    await withTimeout(cdp.send("Emulation.setDeviceMetricsOverride", {
-      width, height, deviceScaleFactor: 1, mobile: false
-    }), 5000, "CDP viewport override timed out");
-  } finally { cdp.close(); }
+  let cdp = viewportSessions.get(target.id);
+  if (!cdp) {
+    cdp = new Cdp(target.webSocketDebuggerUrl);
+    await withTimeout(cdp.open(), 5000, "CDP viewport connection timed out");
+    viewportSessions.set(target.id, cdp);
+  }
+  await withTimeout(cdp.send("Emulation.setDeviceMetricsOverride", {
+    width, height, deviceScaleFactor: 1, mobile: false
+  }), 5000, "CDP viewport override timed out");
+  const metrics = await withTimeout(cdp.send("Page.getLayoutMetrics"), 5000, "CDP viewport metrics timed out");
+  return metrics.result;
 }
 
 async function bringTargetToFront(target) {

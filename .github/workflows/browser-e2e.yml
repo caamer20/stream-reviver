@@ -50,14 +50,14 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
         run: node scripts/soak.mjs --smoke
-      - name: Firefox manifest and temporary install
-        env:
-          FIREFOX_BIN: /usr/bin/firefox
-        run: npm run test:firefox
       - name: Install geckodriver
         uses: browser-actions/setup-geckodriver@fac5b0424c584257f32cf12c5eb4ba86014c34f8
         with:
           geckodriver-version: 0.37.1
+      - name: Firefox manifest and temporary install
+        env:
+          FIREFOX_BIN: /usr/bin/firefox
+        run: npm run test:firefox
       - name: Firefox behavioral scenarios
         env:
           FIREFOX_BIN: /usr/bin/firefox
