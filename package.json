@@ -61,6 +61,6 @@
     "@types/node": "^24.3.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.2",
-    "addons-linter": "10.13.0"
+    "addons-linter": "10.14.0"
   }
 }
